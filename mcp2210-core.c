@@ -14,7 +14,7 @@
 
 #include <linux/usb.h>
 #include "mcp2210.h"
-#include "../hid/usbhid/usbhid.h"
+#include "../../hid/usbhid/usbhid.h"
 
 struct info_command {
 	int id;

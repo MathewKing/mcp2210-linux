@@ -1,0 +1,13 @@
+#
+# MCP2210
+#
+	  
+config MCP2210
+	tristate "MCP2210 usb to spi master"
+	depends on HID && SPI
+	help
+	  If you say yes here you get support for the Microchip
+	  MCP2210 usb to spi master.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called mcp2210.
