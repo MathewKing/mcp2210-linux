@@ -1,7 +1,7 @@
 #
 # MCP2210
 #
-	  
+
 config MCP2210
 	tristate "MCP2210 usb to spi master"
 	depends on HID && SPI
