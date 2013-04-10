@@ -13,6 +13,7 @@
  */
 
 #include <linux/usb.h>
+#include <linux/module.h>
 #include "mcp2210.h"
 #include "/usr/src/linux/drivers/hid/usbhid/usbhid.h"
 /* #include "../../hid/usbhid/usbhid.h" */
@@ -66,7 +67,7 @@ void mcp2210_info_command_interrupted(void *data) {
 }
 
 static void mcp2210_process_commnds(struct mcp2210_device *dev) {
-	int ret = 0;
+	//int ret = 0;
 	//printk("mcp2210_process_commnds\n");
 
 	// Get the next request from the current command
@@ -81,7 +82,7 @@ static void mcp2210_process_commnds(struct mcp2210_device *dev) {
 }
 
 static void mcp2210_output_command(struct work_struct *work) {
-	struct mcp2210_device *dev = container_of(work, struct mcp2210_device, command_work);
+	//struct mcp2210_device *dev = container_of(work, struct mcp2210_device, command_work);
 }
 
 static void mcp2210_output_command_atomic(struct mcp2210_device *dev) {
@@ -169,7 +170,7 @@ err_free_field:
 	kfree(field);
 err_free_report:
 	kfree(report);
-err:
+//err:
 	pending = dev->current_command->requests_pending;
 	if(pending == 0) {
 		if(dev->current_command->interrupted)
@@ -257,7 +258,7 @@ static int mcp2210_probe(struct hid_device *hdev,
 {
 	int ret;
 	struct mcp2210_device *dev;
-	struct info_command *cmd_data;
+	//struct info_command *cmd_data;
 
 	dev = kzalloc(sizeof(struct mcp2210_device), GFP_KERNEL);
 	if (!dev)

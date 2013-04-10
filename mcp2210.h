@@ -64,6 +64,7 @@ int mcp2210_add_command(struct mcp2210_device *dev, void *cmd_data,
 
 static inline void print_msg(u8 *data) {
 	return;
+#if 0
 	int x;
 	for(x = 0; x < 64; x++) {
 		printk("%02x ", data[x]);
@@ -76,6 +77,7 @@ static inline void print_msg(u8 *data) {
 	}
 
 	printk("\n");
+#endif
 }
 
 #endif // _MCP2210_H

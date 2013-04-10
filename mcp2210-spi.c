@@ -167,7 +167,7 @@ static int next_mcp2210_spi_request(void *data, u8 *request)
 static void mcp2210_spi_response(void *data, u8 *response)
 {
 	struct mcp2210_spi_message *mcp_msg = data;
-	int x;
+	//int x;
 	u8 len;
 
 	//printk("Received data\n\n");
