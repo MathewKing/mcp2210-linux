@@ -1,13 +1,111 @@
 #
 # MCP2210
 #
+#define CONFIG_MCP2210_EEPROM y
+#define CONFIG_MCP2210_CREEK y
+#define CONFIG_MCP2210_DEBUG y
+#define CONFIG_MCP2210_VERBOSE_DEBUG y
+#define CONFIG_MCP2210_DEBUG_DEFAULT 7
 
 config MCP2210
-	tristate "MCP2210 usb to spi master"
-	depends on HID && SPI
+	tristate "MCP2210 USB-to-SPI bridge with GPIO"
+	depends on USB_SUPPORT
 	help
 	  If you say yes here you get support for the Microchip
-	  MCP2210 usb to spi master.
+	  MCP2210 USB-to-SPI protocol converter with GPIO. This
+	  driver is an alternative to using this device from userspace
+	  via hid-generic (see Documentation/mfd/mcp2210). You must
+	  also enable support for SPI, GPIO and/or user-EEPROM below
+	  or this driver will do nothing.
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called mcp2210.
+
+	  If unsure, say n.
+
+config MCP2210_SPI
+	bool "Enable SPI support"
+	depends on MCP2210 && SPI
+	defalt y
+	help
+	  Saying yes here builds support for using the MCP2210 as an SPI
+	  master.  Being that the primary purpose of this device IS to be
+	  an SPI master, it may seem a little silly for this option to
+	  even exist, but is here to reduce driver size for those who
+	  just want to use it as a cheap GPIO device.
+
+	  If unsure, say y.
+
+config MCP2210_GPIO
+	bool "Enable GPIO support"
+	depends on MCP2210 && GENERIC_GPIO
+	defalt y
+	help
+	  Saying yes here builds support fpr gpio (somehow)
+
+	  If unsure, say y.
+
+config MCP2210_EEPROM
+	bool "Enable user-EEPROM support"
+	depends on MCP2210
+	defalt y
+	help
+	  The MCP2210 has 256 bytes of user-EEPROM.  Enabling this builds
+	  support for reading & writing this memory via ioctls
+	  (see Documentation/mfd/mcp2210).
+
+	  If unsure, say y.
+
+config MCP2210_QUIRKS
+	bool "Enable work-arounds for quirky USB host drivers"
+	depends on MCP2210
+	help
+	  Saying yes here builds in countermeasures for quirky USB host
+	  drivers like the BCM2835 found on the Raspberry Pi.
+
+	  If unsure, say n.
+
+config MCP2210_DEBUG
+	bool "Enable debug messages"
+	depends on MCP2210
+	help
+	  Saying yes here compiles debug messages into the driver, saying
+	  no removes all printk debug messages from the driver reducing
+	  its size by (some amount) of bytes.  You will still have to
+	  enable them by writing "7" to
+	  /sys/module/mcp2210/parameters/debug.  Or setting
+	  CONFIG_MCP2210_DEBUG_INITIAL to 7.
+
+	  If unsure, say n.
+
+config MCP2210_DEBUG_VERBOSE
+	bool "Enable verbose debug messages"
+	depends on MCP2210 && MCP2210_DEBUG
+	help
+	  If you say yes here you enable verbose debug messages (including
+	  dump of structs & messages).  This will increase the data & text
+	  by about 13k (total).  Unless you are debugging the MCP2210
+	  driver, you probably don't need this.
+
+	  If unsure, say n.
+
+config MCP2210_DEBUG_INITIAL
+	bool "Default debug level"
+	depends on MCP2210
+	help
+	  The initial debug level for this driver.  You can change via
+	  /sys/module/mcp2210/parameters/debug.
+
+config MCP2210_CREEK
+	bool "Creek auto-configuration support"
+	depends on MCP2210_SPI && && MCP2210_GPIO && MCP2210_EEPROM
+	defalt y
+	help
+	  Creek is an auto-configuration scheme that allows you to write
+	  the wiring configuration of your board to the MCP2210's
+	  user-EEPROM area (using a specific format), which the driver
+	  will auto-detect and read during the USB interface probe and
+	  automatically probe the correct SPI protocol drivers, etc.
+	  (see Documentation/mfd/mcp2210).
+
+	  If unsure, say y.

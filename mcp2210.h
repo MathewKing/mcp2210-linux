@@ -2,82 +2,938 @@
  *  MCP 2210 driver for linux
  *
  *  Copyright (c) 2013 Mathew King <mking@trilithic.com> for Trilithic, Inc
+ *                2013 Daniel Santos <daniel.santos@pobox.com>
  *
- */
-
-/*
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
  */
 
 #ifndef _MCP2210_H
 #define _MCP2210_H
 
-#include <linux/mutex.h>
-#include <linux/types.h>
-#include <linux/device.h>
-#include <linux/hid.h>
+#ifdef __KERNEL__
+# include <linux/kconfig.h>
+# include <linux/types.h>
+# include <linux/device.h>
+# include <linux/mutex.h>
+# include <linux/module.h>
+# include <linux/bug.h>
+# include <linux/usb.h>
+# include <linux/spi/spi.h>
+# include <linux/gpio.h>
+# include <linux/jiffies.h>
+#else
+# include <stdint.h>
+# include <stddef.h>
+# include <stdlib.h>
+# include <stdio.h>
+# include <string.h>
+# include <errno.h>
+# include <sys/types.h>
+# include <sys/ioctl.h>
+# include <assert.h>
+#endif /* __KERNEL__ */
 
-#define USB_VENDOR_ID_MICROCHIP		0x04d8
-#define USB_DEVICE_ID_MCP2210		0x00de
-
-#define MCP2210_BUFFER_SIZE		64
-#define MCP2210_MAX_SPEED	(12 * 1000 * 1000)
-
-struct mcp2210_device {
-	struct hid_device *hid;
-	wait_queue_head_t wait;
-	struct mcp2210_command *current_command;
-	//struct mcp2210_command_request *current_request;
-	struct list_head command_list;
-	struct mutex command_mutex;
-	spinlock_t command_lock;
-	struct work_struct command_work;
-	u8 requeust_buffer[MCP2210_BUFFER_SIZE];
-	void *spi_data;
-};
-
-struct mcp2210_command {
-	void *data;
-	struct mcp2210_device *dev;
-	int requests_pending;
-	int processing;
-	int (*next_request)(void *command_data, u8 *request);
-	void (*data_received)(void *command_data, u8 *response);
-	void (*interrupted)(void *command_data);
-	struct list_head node;
-	struct list_head request_list;
-};
-
-struct mcp2210_request_list {
-	struct hid_report *report;
-	struct list_head node;
-};
-
-int mcp2210_add_command(struct mcp2210_device *dev, void *cmd_data,
-		int (*next_request)(void *command_data, u8 *request),
-		void (*data_received)(void *command_data, u8 *response),
-		void (*interrupted)(void *command_data));
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
 
 
-static inline void print_msg(u8 *data) {
-	return;
-#if 0
-	int x;
-	for(x = 0; x < 64; x++) {
-		printk("%02x ", data[x]);
-		if((x + 1) % 16 == 0) {
-			printk("\n");
-		}
-		else if((x + 1) % 8 == 0) {
-			printk("  ");
-		}
-	}
+#ifdef __KERNEL__
+/* module parameters */
+extern int debug_level;
+extern int creek_enabled;
+extern int dump_urbs;
+extern int dump_commands;
 
-	printk("\n");
+#else
+# define BUG()			assert(0)
+# define BUG_ON(cond)		assert(!(cond))
+# define BUILD_BUG_ON(cond)	BUG_ON(cond)
+# define EXPORT_SYMBOL_GPL(symbol)
+# define le32_to_cpu(v)		(v)
+# define cpu_to_le32(v)		(v)
+# define printk printf
+# define KERN_ERR		""
+# define KERN_WARNING		""
+# define KERN_INFO		""
+# define KERN_DEBUG		""
+# define GFP_KERNEL		0
+# define likely(cond)		(cond)
+# define unlikely(cond)		(cond)
+# define IS_ERR_VALUE(x) unlikely((unsigned long)(x) >= (unsigned long)-200)
+
+	/* userspace programs need a few typedefs */
+	typedef int8_t   s8;
+	typedef int16_t  s16;
+	typedef int32_t  s32;
+	typedef int64_t  s64;
+	typedef uint8_t  u8;
+	typedef uint16_t u16;
+	typedef uint32_t u32;
+	typedef uint64_t u64;
+#ifndef __cplusplus
+	typedef _Bool    bool;
 #endif
+
+	typedef unsigned gfp_t;
+
+/* more userspace hacks */
+
+
+static inline void *kzalloc(size_t size, unsigned flags) {
+	void *ret = malloc(size);
+	if (ret)
+		memset(ret, 0, size);
+	return ret;
 }
 
-#endif // _MCP2210_H
+static inline void *kmalloc(size_t size, unsigned flags){return malloc(size);}
+static inline void kfree(void *ptr)			{free(ptr);}
+static inline void *ERR_PTR(long error)			{return (void *) error;}
+static inline long PTR_ERR(const void *ptr)		{return (long) ptr;}
+static inline long IS_ERR(const void *ptr)		{return IS_ERR_VALUE((unsigned long)ptr);}
+static inline long IS_ERR_OR_NULL(const void *ptr)	{return !ptr || IS_ERR_VALUE((unsigned long)ptr);}
+
+#endif /* __KERNEL__ */
+
+
+#define USB_VENDOR_ID_MICROCHIP	0x04d8
+#define USB_DEVICE_ID_MCP2210	0x00de
+
+#define MCP2210_BUFFER_SIZE	64
+#define MCP2210_MAX_SPEED	(12 * 1000 * 1000)
+#define MCP2210_MIN_SPEED	1500
+#define MCP2210_EEPROM_SIZE	256
+#define MCP2210_NUM_PINS	9
+
+
+
+#define _asdf(file, line) file ": " #line
+#define asdf(file, line) _asdf(file, line)
+#define filespot asdf(__FILE__, __LINE__)
+
+//#undef BUG
+//#define BUG() do { printk(filespot " %s fuck me!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", __func__); } while(0)
+
+static const char * const urb_dir_str[] = {"out", "in"};
+
+/**
+ * enum mcp2210_cmd_code - valid command codes for MCP2210
+ *
+ * Listed in order of their appearance in the datasheet with section numbers in
+ * comments.
+ */
+enum mcp2210_cmd_code {
+	MCP2210_CMD_SET_NVRAM		= 0x60,	/* 3.1.1 - 3.1.5 */
+	MCP2210_CMD_GET_NVRAM		= 0x61,	/* 3.1.6 - 3.1.10 */
+	MCP2210_CMD_SEND_PASSWD		= 0x70,	/* 3.1.11 */
+	MCP2210_CMD_GET_SPI_CONFIG	= 0x41,	/* 3.2.1 */
+	MCP2210_CMD_SET_SPI_CONFIG	= 0x40,	/* 3.2.2 */
+	MCP2210_CMD_GET_CHIP_CONFIG	= 0x20,	/* 3.2.3 */
+	MCP2210_CMD_SET_CHIP_CONFIG	= 0x21,	/* 3.2.4 */
+	MCP2210_CMD_GET_PIN_DIR		= 0x33,	/* 3.2.5 */
+	MCP2210_CMD_SET_PIN_DIR		= 0x32,	/* 3.2.6 */
+	MCP2210_CMD_GET_PIN_VALUE	= 0x31,	/* 3.2.7 */
+	MCP2210_CMD_SET_PIN_VALUE	= 0x30,	/* 3.2.8 */
+	MCP2210_CMD_READ_EEPROM		= 0x50,	/* 3.3.1 */
+	MCP2210_CMD_WRITE_EEPROM	= 0x51,	/* 3.3.2 */
+	MCP2210_CMD_GET_INTERRUPTS	= 0x12,	/* 3.4.1 */
+	MCP2210_CMD_SPI_TRANSFER	= 0x42,	/* 3.5.1 */
+	MCP2210_CMD_SPI_CANCEL		= 0x11,	/* 3.5.2 */
+	MCP2210_CMD_SPI_RELEASE		= 0x80,	/* 3.5.3 */
+	MCP2210_CMD_GET_STATUS		= 0x10	/* 3.6.1 */
+};
+
+enum mcp2210_nvram_subcmd_code {
+	MCP2210_NVRAM_CHIP		= 0x20,
+	MCP2210_NVRAM_SPI		= 0x10,
+	MCP2210_NVRAM_KEY_PARAMS	= 0x30,
+	MCP2210_NVRAM_MFG		= 0x50,
+	MCP2210_NVRAM_PROD		= 0x40
+};
+
+/**
+ * enum mcp2210_status - status codes retruned by MCP2210
+ *
+ * @MCP2210_STATUS_SUCCESS:	  No error
+ * @MCP2210_STATUS_SPI_NOT_OWNED: The SPI bus is not currently owned
+ * @MCP2210_STATUS_BUSY:	  Either the SPI bus or USB interface is busy.
+ * @MCP2210_STATUS_WRITE_FAIL:	  Write to EEPROM failed (uh-oh)
+ * @MCP2210_STATUS_NO_ACCESS:	  Either the device is permenantly locked or is
+ * 				  password-protected and you haven't supplied
+ * 				  the magic word.  If you get this with
+ * 				  MCP2210_CMD_SEND_PASSWD it just means that
+ * 				  you've tried too many times and it wont let
+ * 				  you try again until you power cycle the
+ * 				  device.
+ * @MCP2210_STATUS_PERM_LOCKED:	  The device is permemently locked.
+ * @MCP2210_STATUS_BAD_PASSWD:	  You've given a bad password, but can try
+ * 				  again.
+ */
+enum mcp2210_status {
+	MCP2210_STATUS_SUCCESS		= 0x00,
+	MCP2210_STATUS_SPI_NOT_OWNED	= 0xf7,
+	MCP2210_STATUS_BUSY		= 0xf8,
+	MCP2210_STATUS_UNKNOWN_COMMAND	= 0xf9,
+	MCP2210_STATUS_WRITE_FAIL	= 0xfa,
+	MCP2210_STATUS_NO_ACCESS	= 0xfb,
+	MCP2210_STATUS_PERM_LOCKED	= 0xfc,
+	MCP2210_STATUS_BAD_PASSWD	= 0xfd,
+};
+#pragma pack(1)
+#pragma pack()
+/**
+ * mcp2210_msg - A USB message sent to or received from an MCP2210
+ *
+ * @chip	Body for "Chip Settings" (3.1.7, 3.1.1, 3.2.3, and 3.2.4).
+ * @gpio	Body for "GPIO Current Pin Direction" (3.2.5, 3.2.6) and "GIPO Current Pin Value" (3.2.7, 3.2.8)
+ * @spi		Body for "SPI Transfer Settings" (3.1.6, 3.1.2, 3.1.2, and 3.2.2).
+ * @usb_params	Body for "USB Power-Up Key Parameters" (3.1.8, 3.1.3)
+ * @usb_string	Body for "USB Manufacturer Name" and "USB Product Name" (3.1.9, 3.1.4, 3.1.10, 3.1.5)
+ * @password	Body for "Send Access Password" (3.1.11)
+ * @data	Body for SPI data tx & rx
+ *
+ * The entire mcp2210_msg should be zeroed prior to populating fields. Prior to
+ * submitting endianness of all fields (over one byte in size) should be'
+ * converted from CPU to little endian and after recieving, the reverse.
+ *
+ * @see http://ww1.microchip.com/downloads/en/DeviceDoc/22288A.pdf
+ *
+ */
+#pragma pack(1)
+struct mcp2210_msg {
+	u8 cmd;
+
+	union {
+		/* Request headers */
+		union {
+			/* Request header for all "normal" set and get commands
+			 * (excepting MCP2210_CMD_GET_INTERRUPTS and
+			 * MCP2210_CMD_GET_STATUS) */
+			struct {
+				u8 sub_cmd;
+				u16 reserved;
+			} xet;
+
+			/* Request header for reads & writes to EEPROM */
+			struct {
+				u8 addr;
+				u8 value;
+				u8 reserved;
+			} eeprom;
+
+			/* Request header for SPI operations */
+			struct {
+				u8 size;
+				u16 reserved;
+			} spi;
+
+			/* External Interrupt Pin (GP6) Event Status */
+			struct {
+				u8 reset;
+				u16 reserved;
+			} intr;
+		} req;
+
+		/* Response headers */
+		union {
+			u8 status;
+
+			/* Request header for all "normal" set and get commands
+			 * (excepting MCP2210_CMD_GET_INTERRUPTS and
+			 * MCP2210_CMD_GET_STATUS) */
+			struct {
+				u8 status;
+				u8 sub_cmd;
+				u8 reserved;
+			} xet;
+
+			/* Response header for reads & writes to EEPROM */
+			struct {
+				u8 status;
+				u8 addr;
+				u8 value;
+			} eeprom;
+
+			/* Response header for SPI messages */
+			struct {
+				u8 status;
+				u8 size;
+				u8 spi_status;
+			} spi;
+
+			/* Response header for SPI cancel & status */
+			struct {
+				u8 status;
+				u8 release_external_req_status;
+				u8 current_bus_owner;
+			} spi_status;
+		} rep;
+
+		u8 raw[3];
+	} head;
+
+	union {
+		struct mcp2210_chip_settings {
+			u8 pin_mode[MCP2210_NUM_PINS];
+			u16 gpio_value;
+			u16 gpio_direction;
+			u8 other_settings;
+			u8 nvram_access_control;
+			u8 password[8];
+			/* u8 reserved[37]; */
+		} chip;
+
+		u16 gpio;
+
+		/**
+		 * struct mcp2210_spi_xfer_settings
+		 * @bitrate:		   Bits per second.  A valid value is between 1500 (0x5dc) and 12,000,000 (0xb71b00).
+		 * @idle_cs:		   The idle chip select values for pins 0-8: x x x x x x x 8  7 6 5 4 3 2 1 0
+		 * @active_cs:		   The active chip select values for pins 0-8: x x x x x x x 8  7 6 5 4 3 2 1 0
+		 * @delay_cs_to_data:	   Delay between CS assertion and first data byte in multiples of 100 uS (i.e., from zero to 6.5536 seconds).
+		 * @delay_last_byte_to_cs: Delay between last byte and CS de-assertion in multiples of 100 uS.
+		 * @delay_between_bytes:   Delay between data bytes in multiples of 100 uS.
+		 * @bytes_per_trans:	   Number of bytes to transfer per-transaction.
+		 * @mode:		   SPI Mode 0-4.
+		 *
+		 * Values in documentation are expressed in native endianness and functions
+		 * transferring this data should manage any needed conversion to/from native
+		 * endianness.
+		 *
+		 * When representing the values for SPI communications (either sending or receiving the SPI transfer settings), the idle_cs and active_cs are as advertised -- what the values of each pin should be when innactive and active.  When representing the configuration for how to talk to a single SPI device....
+		 */
+		struct mcp2210_spi_xfer_settings {
+			u32 bitrate;
+			u16 idle_cs;
+			u16 active_cs;
+			u16 cs_to_data_delay;
+			u16 last_byte_to_cs_delay;
+			u16 delay_between_bytes;
+			u16 bytes_per_trans;
+			u8 mode;
+			/* u8 reserved[43]; */
+		} spi;
+
+		struct {
+			u8 reserved0[8];
+			u16 vid;
+			u16 pid;
+			u8 reserved1[13];
+			u8 chip_power_option;
+			u8 requested_power;
+			/* u8 reserved2[33]; */
+		} get_usb_params;
+
+		struct mcp2210_usb_key_params {
+			u16 vid;
+			u16 pid;
+			u8 chip_power_option;
+			u8 requested_power;
+			/* u8 reserved[54]; */
+		} set_usb_params;
+
+		struct {
+			u8 length;
+			u8 id;
+			u8 data[58];
+		} usb_string;
+
+		u8 password[8];
+
+		u16 interrupt_event_counter;
+
+		struct {
+			u8 num_pwd_guesses;
+			u8 pwd_guessed;
+		} spi_status;
+
+		u8 raw[60];
+	} body;
+
+};
+#pragma pack()
+
+enum mcp2210_pin_mode {
+	MCP2210_PIN_GPIO	= 0,
+	MCP2210_PIN_SPI		= 1,
+	MCP2210_PIN_DEDICATED	= 2,
+	MCP2210_PIN_UNUSED	= 3
+};
+
+/* FIXME: FUCK, datasheet doesn't say which is which :( */
+enum mcp2210_gpio_direction {
+	MCP2210_GPIO_OUTPUT	= 0,
+	MCP2210_GPIO_INPUT	= 1
+};
+
+/**
+ * mcp2210_pin_config - Configuration for a single multi-purpose pin output
+ *
+ * @mode		How this pin will be used.  Should be one of enum mcp2210_pin_mode
+ * @device_pn		SPI: The part number of the device connected to this PIN.
+ * @device_name		SPI: A more descriptive name of the device
+ *
+ * The MCP2210 has 9 pins that can be used for either General Purpose I/O
+ * (GPIO), SPI Chip Select (CS) or some dedicated function specific to the pin.
+ * This struct represnts both the hardware configuration of that pin as well as
+ * the values for how SPI communications to devices connected to that pin are
+ * done.
+ */
+struct mcp2210_pin_config {
+	u8 mode:2;
+	u8 unused:6;
+	union {
+		/**
+		 * @gpio_dir	GPIO: The default goip direction
+		 * @gpio_out	GPIO: The default value for gpio output
+		 */
+		struct {
+			u8 direction;
+			u8 init_value;
+		} gpio;
+
+		/**
+		 * @max_speed_hz:	SPI: Max bits per second (must be 1500-12000000)
+		 * @max_speed_hz:	SPI: Max bits per second (must be 1500-12000000)
+		 * @mode: 		the struct spi_device mode
+		 * @bits_per_word:	better be 8
+		 * @cs_to_data_delay	SPI: Chip select to data start delay as a quanta of 100 us (i.e., in hundreds of microseconds)
+		 * @last_byte_to_cs_delay SPI: Delay bewteen last byte of data and CS de-activation
+		 * @delay_between_bytes	SPI: Delay bewteen data bytes
+		 * @delay_between_xfers Delay between transfers in microseconds
+		 */
+#if 0
+#define	SPI_CPHA	0x01			/* clock phase */
+#define	SPI_CPOL	0x02			/* clock polarity */
+#define	SPI_MODE_0	(0|0)			/* (original MicroWire) */
+#define	SPI_MODE_1	(0|SPI_CPHA)
+#define	SPI_MODE_2	(SPI_CPOL|0)
+#define	SPI_MODE_3	(SPI_CPOL|SPI_CPHA)
+#define	SPI_CS_HIGH	0x04			/* chipselect active high? */
+#define	SPI_LSB_FIRST	0x08			/* per-word bits-on-wire */
+#define	SPI_3WIRE	0x10			/* SI/SO signals shared */
+#define	SPI_LOOP	0x20			/* loopback mode */
+#define	SPI_NO_CS	0x40			/* 1 dev/bus, no chipselect */
+#define	SPI_READY	0x80			/* slave pulls low to pause */
+#endif
+		struct mcp2210_spi_config {
+			u32 max_speed_hz;
+			u32 min_speed_hz;
+			u8 mode;
+			/*
+			union {
+				u8 raw;
+				struct {
+					u8 mode:2;
+					u8 cs_high:1;
+					u8 lsb_first:1;
+					u8 three_wire:1;
+					u8 loop:1;
+					u8 no_cs:1;
+					u8 ready:1;
+				} bits;
+			} mode;
+			*/
+
+			u8 bits_per_word;
+			u16 cs_to_data_delay;
+			u16 last_byte_to_cs_delay;
+			u16 delay_between_bytes;
+			u16 delay_between_xfers;
+		} spi;
+
+	} body;
+	const char *name;
+	const char *modalias;
+	/*const char *desc; */
+};
+
+struct mcp2210_board_config {
+	struct mcp2210_pin_config pins[MCP2210_NUM_PINS];
+	size_t strings_size;
+	/* const invokes gcc bug #57977 */
+	/* const */ char strings[0];
+};
+
+
+enum mcp2210_eeprom_status {
+	MCP2210_EEPROM_UNREAD = 0,
+	MCP2210_EEPROM_READ_PENDING = 1,
+	MCP2210_EEPROM_READ = 2,
+	MCP2210_EEPROM_DIRTY = 3
+};
+
+
+
+
+enum mcp2210_cmd_type_id {
+	MCP2210_CMD_TYPE_CTL,
+	MCP2210_CMD_TYPE_SPI,
+	MCP2210_CMD_TYPE_EEPROM,
+	MCP2210_CMD_TYPE_MAX
+};
+
+enum mcp2210_cmd_code_state {
+	MCP2210_CMD_STATE_NEW,		/* fresh from the oven */
+	MCP2210_CMD_STATE_SUBMITTED,	/* URBs submitted */
+	MCP2210_CMD_STATE_DONE,		/* everbody's happy */
+	MCP2210_CMD_STATE_DEAD
+};
+
+struct mcp2210_state {
+	u8 have_chip_settings:1;
+	u8 have_power_up_chip_settings:1;
+	u8 have_spi_settings:1;
+	u8 have_power_up_spi_settings:1;
+	u8 have_usb_key_params:1;
+	u8 have_config:1;
+	u8 is_spi_probed:1;
+	u8 is_gpio_probed:1;
+	struct mcp2210_chip_settings chip_settings;
+	struct mcp2210_chip_settings power_up_chip_settings;
+	struct mcp2210_spi_xfer_settings spi_settings;
+	struct mcp2210_spi_xfer_settings power_up_spi_settings;
+	struct mcp2210_usb_key_params usb_key_params;
+	int cur_spi_config;
+	u16 idle_cs;
+	u16 active_cs;
+};
+
+
+#ifdef __KERNEL__
+
+struct mcp2210_cmd;
+struct mcp2210_cmd_type {
+	enum mcp2210_cmd_type_id id;
+	int (*submit_prepare)(struct mcp2210_cmd *cmd_head);
+	int (*complete_urb)(struct mcp2210_cmd *cmd_head);
+	int (*mcp_error)(struct mcp2210_cmd *cmd_head);
+/*	void (*complete_cmd)(struct mcp2210_cmd *cmd_head);*/
+	void (*dump)(const char *level, unsigned indent, const char *start,
+		     const struct mcp2210_cmd *cmd_head);
+	const char *desc;
+};// mcp2210_cmd_types[MCP2210_CMD_TYPE_MAX];
+
+//extern const struct mcp2210_cmd_type mcp2210_cmd_type_ctrl;
+//extern const struct mcp2210_cmd_type mcp2210_cmd_type_eeprom;
+//extern const struct mcp2210_cmd_type mcp2210_cmd_type_spi;
+
+typedef int (*mcp2210_complete_t)(struct mcp2210_cmd *cmd, void *context);
+
+
+/** struct mcp2210_cmd
+ * @dev:
+ * @type:		The type of command or NULL if this is a general-
+ * 			purpose (non-USB transaction) command that will execute
+ * 			when it complete() is called.
+ * @node:
+ * @spinlock:
+ * @time_queued:	time (in jiffies) comand was queued
+ * @time_started:	time (in jiffies) comand processing began
+ * @delay_until:
+ * @status:
+ * @mcp_status:
+ * @state:
+ * @kill:
+ * @can_retry:		True if this command has no side-effects (like querying the chip's settings) and can be retried if the USB transaction fails due to IO errors or shitty drivers.
+ * @nonatomic:		True if this command must be executed in a non-atomic context.
+ * @repeat_count:
+ * @complete:
+ * @context:
+ * @data:
+ *
+ */
+struct mcp2210_cmd {
+	struct mcp2210_device *dev;
+	const struct mcp2210_cmd_type *type;
+	struct list_head node;
+	unsigned long time_queued;
+	unsigned long time_started;
+	unsigned long delay_until;
+	int status;
+	u8 mcp_status;
+	u8 state:2;
+	u8 kill:1;
+	u8 can_retry:1;
+	u8 delayed:1;
+	u8 nonatomic:1;
+	unsigned repeat_count;
+	mcp2210_complete_t complete;
+	void *context;
+	u8 data[0];
+};
+
+struct mcp2210_cmd_ctl {
+	struct mcp2210_cmd head;
+	struct mcp2210_msg req;
+	u8 pin:7;
+	u8 is_mcp_endianness:1;
+};
+
+struct mcp2210_cmd_spi_msg {
+	struct mcp2210_cmd head;
+	struct spi_device *spi;
+	struct spi_message *msg;
+	struct spi_transfer *xfer;
+	unsigned tx_pos;
+	unsigned rx_pos;
+	unsigned tx_bytes_in_process;
+	unsigned spi_in_flight:1;
+	unsigned busy_count;
+	struct mcp2210_cmd_ctl *ctl_cmd;
+};
+
+struct mcp2210_cmd_eeprom {
+	struct mcp2210_cmd head;
+	u8 op;
+	u8 addr;
+	u8 zero_tail;
+	u16 size;
+};
+
+union mcp2210_cmd_any {
+	struct mcp2210_cmd *head;
+	struct mcp2210_cmd_ctl *ctl;
+	struct mcp2210_cmd_spi_msg *spi;
+	struct mcp2210_cmd_eeprom *eeprom;
+};
+
+
+enum mcp2210_ep_state {
+	MCP2210_EP_STATE_NEW,
+	MCP2210_EP_STATE_SUBMITTED,
+	MCP2210_EP_STATE_COMPLETED,
+	MCP2210_EP_STATE_DEAD
+};
+
+
+/**
+ * struct mcp2210_endpoint - a struct for comm with an endpoint
+ *
+ * @ep:		 endpoint struct
+ * @urb:	 The URB that is re-used for each request.
+ * @buffer:	 Coherent DMA-able buffer
+ * @submit_time: time URB was submitted (in jiffies)
+ * @state:
+ * @kill:	 non-zero if URB is being killed
+ * @retry_count: used only with CONFIG_MCP2210_QUIRKY_USB
+ * @is_dir_in:	The direction of this endpoint
+ */
+struct mcp2210_endpoint {
+	const struct usb_host_endpoint *ep;
+	struct urb *urb;
+	struct mcp2210_msg *buffer;
+	unsigned long submit_time;
+	atomic_t unlink_in_process;
+	u8 state;
+	u8 is_mcp_endianness:1;
+	u8 kill:1;
+	u8 is_dir_in:1;
+	u8 retry_count;
+};
+
+enum mcp2210_endpoints {
+	EP_OUT = 0,
+	EP_IN = 1
+};
+
+/**
+ * struct mcp2210_device -
+ *
+ * @intf:
+ * @udev:
+ * @int_in_ep:
+ * @int_out_ep:
+ *
+ * @io_mutex:		Lock for current USB I/O operations.  Lock for access to cur_cmd and reqest_buffer.
+ * @cur_cmd:		The current command in-progress
+ * @requeust_buffer:	rx/tx buffer
+ *
+ * @cmd_queue:		FIFO command queue
+ * @cmd_queue_mutex:	mutex for manipulating cmd_queue
+ *
+ * @dead:		We've encountered an error and we're just giving up on everything (for now)....
+
+ * @pi_in_flight:	An SPI message is in process (or even hung)
+ * @ctl_cmd:		A re-usable control command struct (can be used by cur_cmd only)
+
+ * @have_chip_settings:	@chip_settings accurately relfects the state of the device
+ * @have_spi_settings:	@spi_settings accurately relfects the state of the device
+ * @chip_settings:	Current chip settings (native endianness)
+ * @spi_settings: 	The current SPI transfer settings with values stored in native endianness
+ * @config:		(known) pin configuration data for this device
+ * @cur_spi_config:	The current SPI device that we are configured to communicate with.  Should be 0-8 or -1 for none.
+ * @idle_cs:		calculated value for when all chips are idle
+ *
+ * @eeprom_state:	A 2 bit map of the state of each byte in eeprom_cache. 00 = unread, 01 = read pending (unread), 10 = read, 11 = dirty (write pending).
+ * @eeprom_cache:	Cached EEPROM values.
+ *
+ * Unfortunately, since reads & writes of the 256 bytes of user EEPROM are a
+ * byte at a time, we have to track the state of each byte separately in
+ * eeprom_state.
+ *
+ * Lock order:
+ * dev_spinlock -> queue_spinlock
+ */
+struct mcp2210_device {
+	struct usb_device *udev;
+	struct usb_interface *intf;
+	struct spi_master *spi_master;
+	struct gpio_chip *gpio_chip;
+
+	spinlock_t dev_spinlock;
+	spinlock_t queue_spinlock;
+	struct mutex io_mutex;
+	struct kref kref;
+#ifdef CONFIG_MCP2210_DEBUG
+	atomic_t manager_running;
+#endif
+
+	struct list_head cmd_queue;
+	struct mcp2210_cmd *cur_cmd;
+	struct mcp2210_endpoint eps[2];
+
+	struct delayed_work delayed_work;
+
+	struct spi_device *chips[9];
+
+	int dead;
+	u8 debug_chatter_count:4;
+	u8 spi_in_flight:1;
+	struct mcp2210_state s;
+	struct mcp2210_board_config *config;
+	struct mcp2210_cmd_ctl ctl_cmd;
+#ifdef CONFIG_MCP2210_EEPROM
+	spinlock_t eeprom_spinlock;
+	u8 eeprom_state[64];
+	u8 eeprom_cache[256];
+#endif
+};
+
+/* mcp2210_init_msg - initialize an MCP2210 message
+ *
+ * As long as body_size and zero_tail are compile-time constants, this is a
+ * more effient mechanism to cleanly init a message than zeroing the whole
+ * thing and then overwriting the values you need.
+ */
+static inline void mcp2210_init_msg(struct mcp2210_msg *msg, u8 cmd,
+				    u8 sub_cmd_addr_size, u8 value,
+				    const void *body, size_t body_size,
+				    int zero_tail) {
+	/* init header */
+	msg->cmd = cmd;
+	msg->head.raw[0] = sub_cmd_addr_size;
+	msg->head.raw[1] = value;
+	msg->head.raw[2] = 0;
+
+	/* init body */
+	if(__builtin_constant_p(body_size))
+		BUILD_BUG_ON(body_size > sizeof(msg->body.raw));
+	else
+		BUG_ON(body_size > sizeof(msg->body.raw));
+
+	if (body)
+		memcpy(msg->body.raw, body, body_size);
+	else if (body_size)
+		BUG();
+
+	/* zero remainder */
+	if (zero_tail)
+		memset(msg->body.raw + body_size, 0,
+		       sizeof(msg->body.raw) - body_size);
+}
+
+
+static inline int mcp2210_is_transfer_in_progress(struct mcp2210_device *dev)
+{
+	return !!dev->cur_cmd;
+}
+
+/* marker function to tell gcc that the code that calls this function is cold,
+ * and unlikely to be in the execution path
+ */
+static inline __cold void cold(void) {}
+
+/* exported functions */
+
+/* mcp2210-core.c */
+int mcp2210_update_settings(struct mcp2210_device *dev);
+#define mcp2210_alloc_cmd_type(dev, type, fns, gfp_flags) \
+	((type*) mcp2210_alloc_cmd((dev), fns, sizeof(type), gfp_flags))
+struct mcp2210_cmd *mcp2210_alloc_cmd(struct mcp2210_device *dev,
+				      const struct mcp2210_cmd_type *type,
+				      size_t size, gfp_t gfp_flags);
+int mcp2210_add_or_free_cmd(struct mcp2210_cmd *cmd);
+int process_commands(struct mcp2210_device *dev, gfp_t gfp_flags,
+		     const int lock_held);
+int mcp2210_set_pin_config(struct mcp2210_device *dev, unsigned pin,
+			   const struct mcp2210_pin_config *config);
+int mcp2210_configure(struct mcp2210_device *dev,
+		      struct mcp2210_board_config *new_config);
+
+int mcp2210_spi_probe(struct mcp2210_device *dev);
+void mcp2210_spi_remove(struct mcp2210_device *dev);
+int mcp2210_spi_probe_pin(struct mcp2210_device *dev, unsigned pin);
+void mcp2210_spi_remove_pin(struct mcp2210_device *dev, unsigned pin);
+int mcp2210_gpio_probe(struct mcp2210_device *dev);
+void mcp2210_gpio_remove(struct mcp2210_device *dev);
+int mcp2210_gpio_probe_pin(struct mcp2210_device *dev, unsigned pin);
+void mcp2210_gpio_remove_pin(struct mcp2210_device *dev, unsigned pin);
+
+/* mcp2210-eeprom.c */
+//#ifdef CONFIG_MCP2210_EEPROM
+/* locks dev->eeprom_spinlock */
+int mcp2210_eeprom_read(struct mcp2210_device *dev, u8 *dest, u8 addr,
+			u16 size, mcp2210_complete_t complete, void *context,
+			gfp_t gfp_flags);
+int mcp2210_eeprom_write(struct mcp2210_device *dev, const u8 *src, u8 addr,
+			 u16 size, mcp2210_complete_t complete, void *context,
+			 gfp_t gfp_flags);
+#if 0
+#define mcp2210_eeprom_read(dev, addr, size, complete, context, gfp_flags) (0)
+#define mcp2210_eeprom_write(dev, src, addr, size, complete, context, gfp_flags) (0)
+#endif
+
+
+/* mcp2210-ioctl.c */
+long mcp2210_ioctl(struct file *file, unsigned int request, unsigned long arg);
+
+/* mcp2210-ctl.c */
+void ctl_cmd_init(struct mcp2210_device *dev, struct mcp2210_cmd_ctl *cmd,
+		u8 cmd_code, u8 subcmd_code, void *body, size_t body_size,
+		u8 pin, u8 is_mcp_endianness);
+struct mcp2210_cmd_ctl *mcp2210_alloc_ctl_cmd(struct mcp2210_device *dev,
+		u8 cmd_code, u8 subcmd_code, void *body, size_t body_size,
+		u8 pin, u8 is_mcp_endianness, gfp_t gfp_flags);
+int mcp2210_prepare_spi(struct mcp2210_device *dev,
+			struct mcp2210_cmd_ctl *cmd, u8 pin,
+			struct spi_device *spi, u16 len);
+void calculate_spi_settings(struct mcp2210_spi_xfer_settings *dest,
+			    const struct mcp2210_device *dev,
+			    const struct spi_device *spi,
+			    const struct spi_transfer *xfer, u8 pin);
+
+#if 0
+int compare_spi_settings(const struct mcp2210_spi_xfer_settings *a,
+			 const struct mcp2210_spi_xfer_settings *b)
+{
+	return	   a->bitrate		    != b->bitrate
+		|| a->idle_cs		    != b->idle_cs
+		|| a->active_cs		    != b->active_cs
+		|| a->cs_to_data_delay	    != b->cs_to_data_delay
+		|| a->last_byte_to_cs_delay != b->last_byte_to_cs_delay
+		|| a->delay_between_bytes   != b->delay_between_bytes
+		|| a->bytes_per_trans	    != b->bytes_per_trans
+		|| a->mode		    != b->mode;
+}
+#endif
+
+static inline int compare_spi_settings(
+		const struct mcp2210_spi_xfer_settings *a,
+		const struct mcp2210_spi_xfer_settings *b)
+{
+	return memcmp(a, b, sizeof(*a));
+}
+
+
+
+#if 0
+static inline struct mcp2210_cmd_ctl *mcp2210_alloc_set_spi_settings(
+		struct mcp2210_device *dev, u8 pin,
+		struct mcp2210_spi_xfer_settings *src, gfp_t gfp_flags,
+		int store_as_default)
+{
+	const u8 cmd_code	= store_as_default ? MCP2210_CMD_SET_NVRAM
+				   : MCP2210_CMD_SET_SPI_CONFIG;
+	const u8 subcmd_code	= store_as_default ? MCP2210_NVRAM_SPI
+				   : 0;
+
+	return mcp2210_alloc_ctl_cmd(dev, cmd_code, subcmd_code, src,
+				     sizeof(*src), pin, gfp_flags);
+}
+#endif
+
+static inline int mcp2210_add_ctl_cmd(struct mcp2210_device *dev, u8 cmd_code,
+				      u8 subcmd_code, void *body,
+				      size_t body_size, u8 pin,
+				      u8 is_mcp_endianness, gfp_t gfp_flags)
+{
+	struct mcp2210_cmd_ctl *cmd = mcp2210_alloc_ctl_cmd(dev, cmd_code,
+			subcmd_code, body, body_size, pin, is_mcp_endianness,
+			gfp_flags);
+	return mcp2210_add_or_free_cmd((void *)cmd);
+}
+
+#endif /* __KERNEL__ */
+
+/* mcp2210-lib.c */
+struct mcp2210_board_config *copy_board_config(
+		struct mcp2210_board_config *dest,
+		const struct mcp2210_board_config *src, gfp_t gfp_flags);
+
+#define MCP2210_IOCTL_MAGIC 0xba
+#define READ_IOCTL  _IOR(MCP2210_IOCTL_MAGIC, 0, int)
+#define WRITE_IOCTL _IOW(MCP2210_IOCTL_MAGIC, 1, int)
+
+enum mcp2210_ioctl_cmd {
+	MCP2210_IOCTL_CMD,
+	MCP2210_IOCTL_EEPROM,
+	MCP2210_IOCTL_CONFIG_GET,
+	MCP2210_IOCTL_CONFIG_SET,
+	MCP2210_IOCTL_MAX
+};
+
+static const unsigned int mcp2210_ioctl_map[] = {
+    _IOWR(MCP2210_IOCTL_MAGIC, MCP2210_IOCTL_CMD, void *),
+    _IOWR(MCP2210_IOCTL_MAGIC, MCP2210_IOCTL_EEPROM, void *),
+    _IOWR(MCP2210_IOCTL_MAGIC, MCP2210_IOCTL_CONFIG_GET, void *),
+    _IOW (MCP2210_IOCTL_MAGIC, MCP2210_IOCTL_CONFIG_SET, void *),
+};
+
+struct mcp2210_ioctl_data {
+	u32 struct_size;
+	union {
+		struct mcp2210_ioctl_data_eeprom {
+			u8 addr;
+			u16 size:9;
+			u16 is_read:1;
+			u8 data[0];
+		} eeprom;
+		struct mcp2210_ioctl_data_config {
+			u8 wait:1;
+			struct mcp2210_state state;
+			struct mcp2210_board_config config;
+		} config;
+		struct mcp2210_ioctl_data_cmd {
+			int status;
+			u8 mcp_status;
+			struct mcp2210_msg req;
+			struct mcp2210_msg rep;
+			u8 data[0];
+		} cmd;
+	} body;
+};
+
+static const size_t IOCTL_DATA_EEPROM_SIZE = offsetof(
+			struct mcp2210_ioctl_data, body.eeprom.data);
+static const size_t IOCTL_DATA_CONFIG_SIZE = offsetof(
+			struct mcp2210_ioctl_data, body.config.config.strings);
+
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
+#endif /* _MCP2210_H */
