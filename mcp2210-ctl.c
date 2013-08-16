@@ -425,6 +425,8 @@ static void calculate_active_cs(const struct mcp2210_device *dev,
 		pin_cfg = &dev->config->pins[i];
 		if (pin_cfg->mode == MCP2210_PIN_SPI) {
 			u16 cs = !(pin_cfg->body.spi.mode & SPI_CS_HIGH);
+
+			*idle_cs |= cs << i;
 			if (pin == i) {
 				if (spi)
 					cs = !!(spi->mode & SPI_CS_HIGH);
@@ -433,7 +435,6 @@ static void calculate_active_cs(const struct mcp2210_device *dev,
 			}
 
 			*active_cs |= cs << i;
-			*idle_cs |= !cs << i;
 		}
 	}
 }
