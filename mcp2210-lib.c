@@ -42,6 +42,20 @@
 #endif
 
 
+static void copy_board_config_string(const char *strings, size_t strings_size,
+				     size_t *pos, const char **dest, const char *src)
+{
+	ssize_t buf_size = strings_size - *pos;
+
+	if (!src)
+		return;
+
+	BUG_ON(buf_size < 0);
+
+	*dest = (char *)&strings[*pos];
+	strncpy((char *)*dest, src, buf_size);
+	*pos += strlen(src) + 1;
+}
 
 /**
  * copy_board_config - copy a struct mcp2210_board_config object
@@ -64,8 +78,12 @@ struct mcp2210_board_config *copy_board_config(
 
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		const struct mcp2210_pin_config *pin = &src->pins[i];
+		printk(KERN_DEBUG "src->pins[%u].name = %p (\"%s\")\n",
+		       i, pin->name, pin->name ? pin->name : "");
 		if (pin->name)
 			str_size += strlen(pin->name) + 1;
+		printk(KERN_DEBUG "src->pins[%u].modalias = %p (\"%s\")\n",
+		       i, pin->modalias, pin->modalias ? pin->modalias : "");
 		if (pin->modalias)
 			str_size += strlen(pin->modalias) + 1;
 	}
@@ -90,19 +108,15 @@ struct mcp2210_board_config *copy_board_config(
 	dest->strings_size = str_buffer_size;
 
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
-		const struct mcp2210_pin_config *pin = &src->pins[i];
+		const struct mcp2210_pin_config *src_pin = &src->pins[i];
+		struct mcp2210_pin_config *dest_pin = &dest->pins[i];
 
-		if (pin->name) {
-			strncpy((char *)&dest->strings[pos], pin->name,
-				str_size - pos);
-			pos += strlen(pin->name) + 1;
-		}
-
-		if (pin->modalias) {
-			strncpy((char *)&dest->strings[pos], pin->modalias,
-				str_size - pos);
-			pos += strlen(pin->modalias) + 1;
-		}
+		copy_board_config_string(dest->strings, str_size, &pos,
+					 &dest_pin->name,
+					 src_pin->name);
+		copy_board_config_string(dest->strings, str_size, &pos,
+					 &dest_pin->modalias,
+					 src_pin->modalias);
 	}
 
 	BUG_ON(pos != str_size);
@@ -356,7 +370,7 @@ struct mcp2210_board_config *creek_decode(
 
 	for (i = 0; i < dec.spi_count; ++i) {
 		u8 pin = dec.spi_pin_num[i];
-		struct mcp2210_spi_config *spi = &tmp_pins[pin].body.spi;
+		struct mcp2210_pin_config_spi *spi = &tmp_pins[pin].body.spi;
 
 		spi->max_speed_hz	   = unpack_uint_opt(&bs, 10, 2,
 							     MCP2210_MAX_SPEED);
@@ -577,7 +591,7 @@ int creek_encode(const struct mcp2210_board_config *src, const struct mcp2210_ch
 	/* write spi setting data */
 	for (i = 0; i < data.spi_count; ++i) {
 		u8 pin = data.spi_pin_num[i];
-		const struct mcp2210_spi_config *spi = &src->pins[pin].body.spi;
+		const struct mcp2210_pin_config_spi *spi = &src->pins[pin].body.spi;
 
 		pack_uint_opt(&bs, spi->max_speed_hz, 10, 2, MCP2210_MAX_SPEED);
 		pack_uint_opt(&bs, spi->min_speed_hz, 10, 2, MCP2210_MIN_SPEED);
@@ -742,10 +756,10 @@ static struct code_desc mcp2210_cmd_type_id_codes[] = {
 };
 
 static struct code_desc mcp2210_state_codes[] = {
-	{MCP2210_CMD_STATE_NEW,		"new"},
-	{MCP2210_CMD_STATE_SUBMITTED,	"submitted"},
-	{MCP2210_CMD_STATE_DONE,	"done"},
-	{MCP2210_CMD_STATE_DEAD,	"dead"},
+	{MCP2210_STATE_NEW,		"new"},
+	{MCP2210_STATE_SUBMITTED,	"submitted"},
+	{MCP2210_STATE_COMPLETE,	"done"},
+	{MCP2210_STATE_DEAD,	"dead"},
 	{}
 };
 
@@ -809,7 +823,7 @@ void dump_chip_settings(const char *level, unsigned indent, const char *start,
 	       level, get_indent(indent), start, s,
 	       ind);
 
-	for (i = 0; i < 9; ++i)
+	for (i = 0; i < MCP2210_NUM_PINS; ++i)
 		printk("%s%s  [%u] = %s\n", level, ind, i,
 		       get_pin_mode_str(s->pin_mode[i]));
 
@@ -1031,7 +1045,7 @@ void dump_board_config(const char *level, unsigned indent, const char *start,
 	       level, get_indent(indent), start, bc,
 	       ind);
 
-	for (i = 0; i < 9; ++i) {
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		buf[1] = '0' + i;
 		dump_pin_config(level, indent + 4, buf, &bc->pins[i]);
 	}
@@ -1516,7 +1530,7 @@ void dump_cmd_ctl(const char *level, unsigned indent, const char *start,
 	       ind, cmd->is_mcp_endianness,
 	       ind);
 
-	if (cmd_head->state == MCP2210_CMD_STATE_DONE) {
+	if (cmd_head->state == MCP2210_STATE_COMPLETE) {
 		dump_mcp_msg(level, indent, "Control command response = ",
 			     dev->eps[EP_IN].buffer, false);
 

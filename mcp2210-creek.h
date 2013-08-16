@@ -179,56 +179,6 @@ static inline uint mcp2210_unpack_uint2(uint packed, uint value_bits, uint scale
 	return (packed & ((1 << value_bits) - 1)) * mult;
 }
 #endif
-#if 0
-/**
- * struct mcp2210_spi_config_packed
- * @use_name_only:	(1 bit) if zero, this struct is used to configure the
- * 			SPI device.  If one, then this struct is ignored and
- * 			configuration will be performed based upon matching the
- * 			name of the device. In this case, the first byte is
- * 			shifted left (to discard this bit) and the result is
- * 			treated as the first character of the bit-7-terminated
- * 			ASCII string of at least two bytes containing the name
- * 			of the device.  (i.e., the first byte cannot be
- * 			terminated, since we're shifting it.)
- * @has_name:		(1 bit) If 1, then this struct is followed by a device
- * 			name, which is a bit-7 high terminated ASCII string.
- * 			As noted above, this is ignored if use_name_only is set
- * 			and adding a name when using this struct is only for
- * 			the sake of clarity and labeling.
- * @mode:		(2 bits) SPI Mode 0-4.
- * @active_cs:		(1 bit) If 1, then CS is active high, otherwise, it is
- * 			active low.
- * @delay_cs_to_data:	(9 bits, packed 7:2) Delay between CS assertion and
- * 			first data byte in multiples of 100 uS
- * @delay_last_byte_to_cs: (9 bits, packed 7:2) Delay between last byte and CS
- * 			de-assertion in multiples of 100 uS.
- * @delay_between_bytes: (9 bits, packed 7:2) Delay between data bytes in
- * 			multiples of 100 uS.
- * @bitrate:		(12 bits, packed 10:2) Bit rate in 100s of bits per
- * 			second.  Valid values are 1500 to 12,000,000.
- *
- * This is a packed structure to contain the communication settings for a
- * single SPI device in 6 bytes and store this on the user-EEPROM of the
- * MCP2210.
- */
-#pragma pack(1)
-struct mcp2210_creek_spi_config {
-	u32 use_name_only:1;
-	u32 has_name:1;
-	u32 mode:2;
-	u32 active_cs:1;
-	u32 cs_to_data_delay:9;		// 7:2, valid range is zero to 65,000 (6.5 seconds)
-	u32 last_byte_to_cs_delay:9;
-	u32 delay_between_bytes:9;
-	u16 bitrate:12;			// 10:2, valid range is 15 to 120,000 representing 1500 to 12,000,000 bps
-	u16 unused:4;
-	u8 name[0];
-};
-#pragma pack()
-#endif
-
-
 
 #ifdef __cplusplus
 }

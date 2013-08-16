@@ -41,7 +41,7 @@ static const struct mcp2210_chip_settings chip_settings =  {
 	.password = {0, 0, 0, 0, 0, 0, 0, 0},
 };
 
-static const struct mcp2210_board_config static_board_config = {
+static const struct mcp2210_board_config my_board_config = {
 	.pins = {
 		{
 			.mode = MCP2210_PIN_SPI,
@@ -104,7 +104,7 @@ static int compare_board_config(const struct mcp2210_board_config *a,
 
 	uint i;
 
-	for (i = 0; i < 9; ++i) {
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		const struct mcp2210_pin_config *pa = &a->pins[i];
 		const struct mcp2210_pin_config *pb = &b->pins[i];
 		int ret = (int)i * 16;
@@ -151,14 +151,14 @@ int test_encoding(int argc, char *argv[]) {
 	int ret;
 
 	memset(buf, 0, sizeof(buf));
-	board_config = copy_board_config(NULL, &static_board_config, 0);
+	board_config = copy_board_config(NULL, &my_board_config, 0);
 	if (!board_config) {
 		errno = ENOMEM;
 		perror("");
 		return -ENOMEM;
 	}
 
-	ret = compare_board_config(board_config, &static_board_config);
+	ret = compare_board_config(board_config, &my_board_config);
 	if (ret) {
 		fprintf(stderr, "copy_board_config() produced a non-matching copy: ret = %d\n", ret);
 		goto exit_free;

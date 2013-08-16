@@ -173,7 +173,7 @@ static int eeprom_submit_prepare(struct mcp2210_cmd *cmd_head)
 		/* it's possible to have nothing to do, like reading values
 		 * that have already been read and are cached.
 		 */
-		cmd->head.state = MCP2210_CMD_STATE_DONE;
+		cmd->head.state = MCP2210_STATE_COMPLETE;
 		return -EALREADY;
 	}
 

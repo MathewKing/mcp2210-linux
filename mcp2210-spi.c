@@ -1,5 +1,5 @@
 /*
- *  MCP 2210 driver for linux
+ *  MCP2210 driver spi layer
  *
  *  Copyright (c) 2013 Mathew King <mking@trilithic.com> for Trilithic, Inc
  *		  2013 Daniel Santos <daniel.santos@pobox.com>
@@ -105,7 +105,7 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 		goto error0;
 	}
 
-	for (i = 0; i < 9; ++i) {
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		struct mcp2210_pin_config *cfg = &dev->config->pins[i];
 		struct spi_device *chip;
 		const char *modalias;
@@ -414,13 +414,14 @@ submit_ctl_cmd:
 		/* the chip may be in the middle of a failed SPI transfer, so we have to kill that */
 		if (dev->spi_in_flight) {
 			mcp2210_warn("***** old SPI message still in-flight, killing...");
-			ctl_cmd_init(dev, &dev->ctl_cmd, MCP2210_CMD_SPI_CANCEL, 0, NULL, 0, pin, false);
+			ctl_cmd_init(dev, &dev->ctl_cmd, MCP2210_CMD_SPI_CANCEL, 0, NULL, 0, false);
 			cmd->ctl_cmd = &dev->ctl_cmd;
 			goto submit_ctl_cmd;
 		}
 
 		need_spi_settings = 1;
-		/* calculate_spi_settings_fat(dev, &needed, pin, cmd->spi, cmd->xfer); */
+		mcp2210_debug("dev->s.cur_spi_config = %d", dev->s.cur_spi_config);
+		dump_spi_xfer_settings(KERN_DEBUG, 0, "dev->s.spi_settings = ", &dev->s.spi_settings);
 		calculate_spi_settings(&needed, dev, cmd->spi, cmd->xfer, pin);
 
 
@@ -441,9 +442,10 @@ submit_ctl_cmd:
 
 		/* TODO: still missing cmd->spi->mode & (~(SPI_MODE_3 | SPI_CS_HIGH)) */
 		if (need_spi_settings) {
-			mcp2210_info("Settings SPI Transfer Settings");
-			ctl_cmd_init(dev, &dev->ctl_cmd, MCP2210_CMD_SET_SPI_CONFIG, 0, &needed, sizeof(needed), pin, false);
 			cmd->ctl_cmd = &dev->ctl_cmd;
+			mcp2210_info("Settings SPI Transfer Settings");
+			ctl_cmd_init(dev, cmd->ctl_cmd, MCP2210_CMD_SET_SPI_CONFIG, 0, &needed, sizeof(needed), false);
+			cmd->ctl_cmd->pin = pin;
 			goto submit_ctl_cmd;
 		}
 	}
@@ -489,12 +491,21 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 	struct mcp2210_cmd_spi_msg *cmd = (void *)cmd_head;
 	struct mcp2210_device *dev;
 	struct mcp2210_msg *rep;
+	const struct mcp2210_pin_config_spi *cfg;
+//	unsigned long cur_time = jiffies;
+	unsigned bytes_pending;
+	long expected_time_usec = 0;
 	u8 pin;
 	u8 len;
 
-	BUG_ON(!cmd_head->dev);
 	dev = cmd_head->dev;
 	pin = cmd->spi->chip_select;
+
+	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
+		BUG_ON(!cmd_head->dev);
+		BUG_ON(pin > 8);
+		BUG_ON(dev->config->pins[pin].mode != MCP2210_PIN_SPI);
+	}
 
 	mcp2210_info();
 
@@ -507,7 +518,8 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 			mcp2210_info("----CONTROL COMMAND RESPONSED----");
 
 			/* get the dump function to print the response */
-			cc->state = MCP2210_CMD_STATE_DONE;
+			cc->state = MCP2210_STATE_COMPLETE;
+			mcp2210_debug("dev->s.cur_spi_config = %d", dev->s.cur_spi_config);
 			dump_spi_xfer_settings(KERN_INFO, 0, "spi settings now: ", &dev->s.spi_settings);
 		}
 
@@ -521,16 +533,19 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 
 	rep = dev->eps[EP_IN].buffer;
 	len = rep->head.rep.spi.size;
+	cfg = &dev->config->pins[pin].body.spi;
 
-	/* now we'll claim that we really transferred them? */
+
+	/* by "in process", we mean really sent to the MCP2210 */
 	cmd->tx_pos += cmd->tx_bytes_in_process;
+	bytes_pending = cmd->tx_bytes_in_process - len;
 	cmd->tx_bytes_in_process = 0;
 
 	mcp2210_info("pin %hhu\n", pin);
 	//print_mcp_msg(cmd->head.dev, KERN_DEBUG, "SPI response: ", rep);
 
 	if (len) {
-		// There is data to receive
+		/* There is data to receive */
 		if(cmd->xfer->rx_buf)
 			memcpy(cmd->xfer->rx_buf + cmd->rx_pos, rep->body.raw, len);
 
@@ -562,8 +577,24 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 		cmd->spi_in_flight = 0;
 		cmd->busy_count = 0;
 		cmd->ctl_cmd = NULL;
+
+		expected_time_usec = cfg->delay_between_xfers;
+		cmd->head.delay_until = jiffies + msecs_to_jiffies(1);
+		cmd->head.delayed = 1;
+	} else {
+		/* try to determine when the device will be ready */
+		expected_time_usec = 100ul * cfg->last_byte_to_cs_delay
+			+ bytes_pending * dev->s.spi_delay_per_kb / 1024ul;
+		if (rep->head.rep.spi.spi_status == 0x20)
+			expected_time_usec += 100ul * cfg->cs_to_data_delay;
 	}
 
+	mcp2210_info("expected_time_usec: %lu (%lu jiffies)",
+		     expected_time_usec, usecs_to_jiffies(expected_time_usec));
+
+	cmd->head.delay_until = dev->eps[EP_OUT].submit_time
+					+ usecs_to_jiffies(expected_time_usec);
+	cmd->head.delayed = 1;
 	return -EAGAIN;
 }
 
@@ -576,8 +607,9 @@ static int spi_mcp_error(struct mcp2210_cmd *cmd_head)
 	mcp2210_warn("cmd->busy_count %u\n", cmd->busy_count);
 
 	++cmd->busy_count;
-	if (cmd->busy_count < 16) {
-		cmd->head.delay_until = jiffies + msecs_to_jiffies(50);
+	if (cmd->busy_count < 32) {
+		/* hmm, hopefully shoudn't happen */
+		cmd->head.delay_until = jiffies + 1;
 		cmd->head.delayed = 1;
 		return -EAGAIN;
 	} else

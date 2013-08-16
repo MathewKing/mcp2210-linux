@@ -20,3 +20,14 @@
 
 #include <linux/gpio.h>
 
+#include "mcp2210.h"
+
+
+int mcp2210_gpio_probe(struct mcp2210_device *dev)
+{
+	return 0;
+}
+
+void mcp2210_gpio_remove(struct mcp2210_device *dev)
+{
+}

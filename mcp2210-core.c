@@ -26,12 +26,16 @@
  *
  * Fix list:
  * - re-implement device failure
- * - ioctl interface not x32 ABI friendly
+ * - When a command dies and can't be retried, we need to do something more than just log it.
  * - change ioctl to netlink
+ * - ioctl interface not friendly with ABIs where kernel & user space have different sized ptrs (x32, etc.) (I say fix this when we convert to netlink)
+ * - obey struct spi_transfer cs_change
+ * - "wait" on set config ioctl not respected
  *
  * Tweak list:
  * - examine locking and refine
- * - single background thread to manage all mcp2210 devices (optional)
+ * - better prediction of how long SPI transfers will take and appropriate
+ *   scheduling so that we don't unneccessarily request a status.
  *
  * Home page:
  *	https://www.microchip.com/wwwproducts/Devices.aspx?dDocName=en556614
@@ -50,19 +54,21 @@
  * uses libusb.  All together, it gives you a pretty user-friendly userland
  * interface to to the device, but carries the following drawbacks:
  *
- * - Extensive overhead: hid-core driver, libusb, hidapi and MCP2210-Library
- *   (there's not much to hid-generic) means lots of memory & CPU.
+ * - Extensive overhead: hid-core driver -> usbhid driver -> (hid-generic
+ *   driver) -> libusb -> hidapi -> MCP2210-Library means lots of memory & CPU.
+ *   (Note however that hid-generic is virtually non-existent)
  * - No way to use SPI protocol drivers to manage periphials on the other side
  *   of the MCP2210.
  * - No mechanism for auto-configuration outside of userland.
  *
  * This driver attempts to solve these shortcomings by eliminating all of these
  * layers, including hid-core, communicating with the MCP2210 directly via
- * interrupt URBs and allowing your choice of driver for each SPI device, with
- * the standard option of spidev for interating with the SPI device from
- * userspace.  In addition, it supplies an (optional) auto-configuration scheme
- * which utilizes the devices 256 bytes of user EEPROM to store the wiring
- * information for the board.
+ * interrupt URBs and allowing your choice of spi protocol driver for each SPI
+ * device, with the standard option of spidev for interating with the SPI device
+ * from userspace.  In addition, it supplies an (optional) auto-configuration
+ * scheme which utilizes the devices 256 bytes of user EEPROM to store the wiring
+ * information for the board and a fairly complete ioctl interface for userland
+ * configuration, testing and such.
  *
  * Theory of operation:
  *
@@ -70,11 +76,12 @@
  * commands are auto-queued when the driver probes, the rest are received via
  * ioctls and the spi_master interface. Each command represents a logically
  * atomic operation and typically exchanges at least one message with the
- * device.  Commands are represented structs that derive from struct
+ * device.  Commands are represented by structs that derive from struct
  * mcp2210_cmd via psudo-inheritence, embedding a struct mcp2210_cmd object as
  * its first member and using a type field to specify the command type.  There
- * are also general-purpose commands with a NULL type that only exist to defer
- * some work until later.
+ * are also general-purpose commands with a NULL type (and no "sub-type", they
+ * are just a struct mcp2210_cmd object) that only exist to defer some work
+ * until later.
  *
  * Each of the (normal) command types are implemented in either mcp2210-spi.c,
  * mcp2210-ctl.c or mcp2210-eeprom.c for spi messages, control/query commands
@@ -82,16 +89,32 @@
  *
  * process_commands():
  * Messages in the queue are processed via process_commands(). If dev->cur_cmd
- * is NULL, it will attempt to retrieve a command from the queue, marking
- * its state as new.  If there is a command in the new state, submit_urbs() is
- * called and its state is set to "submitted". Completion handlers for the in
- * and out URBs will eventually be called marking the command as done and
- * calling process_commands() to have the "done" command finalized, calling its
+ * is NULL, it will attempt to retrieve a command from the queue, marking its
+ * state as new. How it processes commmands differs between "normal" commands
+ * (which interact with the MCP2210) and general-purpose commands (which are
+ * simply some delayed work)
+ *
+ * -- Normal Commands
+ * If there is a normal command in the new state, submit_urbs() is called and
+ * its state is set to "submitted". Completion handlers for the in and out URBs
+ * will eventually be called (if the usb host driver behaves) marking the
+ * command as "completed" and calling process_commands() to have the completed
+ * command finalized. Finalization is performed by calling struct mcp2210_cmd's
  * complete function (if non-NULL) and freeing it.  Then, the next message is
- * retrieved, and so forth.  Thus, it becomes the responsibility of the
- * command's complete_urb() to keep the message pump going. (The exception
- * being for general-purpose commands, which process_commands() takes care of
- * its self).
+ * retrieved, and so forth.
+ *
+ * -- General-Purpose Commands
+ * For general-purpose commands, submit/complete_urbs() is bypassed and it is
+ * instead immediately marked as completed having its complete() function
+ * called.
+ *
+ * -- Deferred Work
+ * A command may be deferred because:
+ * a. It needs to wait before running (giving the device time to be ready) or
+ * b. It needs to run in a non-atomic state.
+ *
+ * In either of these cases, process_commands() will instead request that the
+ * delayed_work execute the command and reschedule it to run when needed.
  *
  * submit_urbs():
  * This function will first call the command type's submit_prepare() function,
@@ -102,16 +125,22 @@
  * restarted and submit_urbs() called again). It will then submit the URBS and
  * change the command's state to "submitted".
  *
- * urb_complete():
- * This section is out of date
+ * complete_urb():
+ * This function manages both the in & out URBs.
+ *
+ * Once both URBs have completed,
+ * the command type's complete_urb() function is called and the command's
+ * state is set to "completed".
+ *
 #if 0
- * When the in URB completes, urb_complete_in() performs the following:
+out of date info:
+ * When the in URB completes, complete_urb_in() performs the following:
  * - basic sanity checks & URB status via check_urb_status()
  * - sets command status to "sent"
  * - calls the command type's complete_tx() function (if it has one)
  *
- * urb_complete_out():
- * Similarly, when the out URB completes, urb_complete_out() performs
+ * complete_urb_out():
+ * Similarly, when the out URB completes, complete_urb_out() performs
  * the following:
  * - calls check_urb_status() and exits upon error
  * - checks for and handles out-of-order responses
@@ -151,7 +180,7 @@ static bool reschedule_delayed_work(struct mcp2210_device *dev,
 				    unsigned long _jiffies);
 static inline bool reschedule_delayed_work_ms(struct mcp2210_device *dev,
 					      unsigned int ms);
-static void urb_complete(struct urb *urb);
+static void complete_urb(struct urb *urb);
 //static void complete_cmd(struct mcp2210_cmd *cmd);
 static int submit_urbs(struct mcp2210_cmd *cmd, gfp_t gfp_flags);
 
@@ -371,7 +400,7 @@ static struct usb_class_driver mcp2210_class = {
 
 static inline void reset_endpoint(struct mcp2210_endpoint *ep)
 {
-	ep->state = MCP2210_EP_STATE_NEW;
+	ep->state = MCP2210_STATE_NEW;
 	ep->kill = 0;
 }
 
@@ -434,7 +463,7 @@ static __always_inline int init_endpoint(struct mcp2210_device *dev,
 			pipe,
 			dest->buffer,
 			64,
-			urb_complete,
+			complete_urb,
 			dev,
 			ep->desc.bInterval);
 	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
@@ -640,7 +669,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	spin_lock_init(&dev->eeprom_spinlock);
 #endif
 	mutex_init(&dev->io_mutex);
-	ctl_cmd_init(dev, &dev->ctl_cmd, 0, 0, NULL, 0, 0, false);
+	ctl_cmd_init(dev, &dev->ctl_cmd, 0, 0, NULL, 0, false);
 #ifdef CONFIG_MCP2210_DEBUG
 	atomic_set(&dev->manager_running, 0);
 #endif
@@ -687,17 +716,17 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	/* Submit initial commands & queries.  First, we have to cancel any SPI
 	 * messages that were started (and not finished) prior the host machine
 	 * rebooting since the chip fails to do this upon USB reset. */
-	if ((ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_SPI_CANCEL, 0, NULL, 0, 0, false, GFP_KERNEL))
+	if ((ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_SPI_CANCEL, 0, NULL, 0, false, GFP_KERNEL))
 	/* current chip configuration */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_CHIP_CONFIG, 0, NULL, 0, 0, false, GFP_KERNEL))
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_CHIP_CONFIG, 0, NULL, 0, false, GFP_KERNEL))
 	/* current SPI configuration */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_SPI_CONFIG, 0, NULL, 0, 0, false, GFP_KERNEL))
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_SPI_CONFIG, 0, NULL, 0, false, GFP_KERNEL))
 	/* power-up chip configuration */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_SPI, NULL, 0, 0, false, GFP_KERNEL))
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_SPI, NULL, 0, false, GFP_KERNEL))
 	/* power-up SPI configuration */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_CHIP, NULL, 0, 0, false, GFP_KERNEL))
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_CHIP, NULL, 0, false, GFP_KERNEL))
 	/* user key parameters */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_KEY_PARAMS, NULL, 0, 0, false, GFP_KERNEL))) {
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_KEY_PARAMS, NULL, 0, false, GFP_KERNEL))) {
 
 		mcp2210_err("Adding some command failed with %de", ret);
 		goto error2;
@@ -782,11 +811,12 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 		return -EPERM;
 
 	dev->s.cur_spi_config = -1;
+	dev->s.have_config = 1;
 	dev->config = new_config;
 
 	memcpy(&chip_settings, &dev->s.chip_settings, sizeof(chip_settings));
 
-	for (i = 0; i < 9; ++i) {
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		u8 mode = dev->config->pins[i].mode;
 
 		chip_settings.pin_mode[i] = (mode != MCP2210_PIN_UNUSED)
@@ -795,7 +825,7 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 	}
 
 	mcp2210_add_ctl_cmd(dev, MCP2210_CMD_SET_CHIP_CONFIG, 0, &chip_settings,
-			    sizeof(chip_settings), 0, false, GFP_ATOMIC);
+			    sizeof(chip_settings), false, GFP_ATOMIC);
 
 	mcp2210_info("----------probing SPI----------\n");
 	mcp2210_spi_probe(dev);
@@ -831,8 +861,9 @@ void mcp2210_disconnect(struct usb_interface *intf)
 
 	spin_lock_irqsave(&dev->queue_spinlock, irqflags);
 	while (!list_empty(&dev->cmd_queue)) {
-		struct mcp2210_cmd *cmd = list_entry(
-				dev->cmd_queue.next, struct mcp2210_cmd, node);
+		struct mcp2210_cmd *cmd = list_first_entry(&dev->cmd_queue,
+							   struct mcp2210_cmd,
+							   node);
 		list_del(dev->cmd_queue.next);
 
 		if (cmd->complete) {
@@ -904,7 +935,7 @@ restart:
 	cmd = dev->cur_cmd;
 
 	/* if the current command is dead or done, then free it */
-	if (cmd && cmd->state >= MCP2210_CMD_STATE_DONE) {
+	if (cmd && cmd->state >= MCP2210_STATE_COMPLETE) {
 		ret = 0;
 
 		if (cmd->complete) {
@@ -968,7 +999,7 @@ restart:
 		mcp2210_info("got a command (%p)", cmd);
 	}
 
-	if (cmd->state == MCP2210_CMD_STATE_NEW) {
+	if (cmd->state == MCP2210_STATE_NEW) {
 		if (cmd->delayed) {
 			unsigned long cur_time = jiffies;
 			long diff = jiffdiff(cmd->delay_until, cur_time);
@@ -988,7 +1019,7 @@ restart:
 			goto defer;
 
 		if (!cmd->type) {
-			cmd->state = MCP2210_CMD_STATE_DONE;
+			cmd->state = MCP2210_STATE_COMPLETE;
 			goto restart;
 		}
 
@@ -997,15 +1028,15 @@ restart:
 		if (ret) {
 			/* the command wasn't ready to run */
 			if (ret == -EAGAIN)
-				cmd->state = MCP2210_CMD_STATE_NEW;
+				cmd->state = MCP2210_STATE_NEW;
 
 			/* the command is already done */
 			else if (ret == -EALREADY) {
-				cmd->state = MCP2210_CMD_STATE_DONE;
+				cmd->state = MCP2210_STATE_COMPLETE;
 				cmd->status = 0;
 
 			} else {
-				cmd->state = MCP2210_CMD_STATE_DEAD;
+				cmd->state = MCP2210_STATE_DEAD;
 				cmd->status = ret;
 				mcp2210_err("submit_urbs() failed: %de, here are "
 					"the dead URBs\n", ret);
@@ -1021,7 +1052,7 @@ restart:
 			goto restart;
 		}
 
-		cmd->state = MCP2210_CMD_STATE_SUBMITTED;
+		cmd->state = MCP2210_STATE_SUBMITTED;
 	}
 
 exit_unlock:
@@ -1079,7 +1110,7 @@ static noinline int report_status_error(struct mcp2210_device *dev, u8 status)
 		ret = -EACCES;
 		break;
 
-	case MCP2210_STATUS_UNKNOWN_COMMAND:
+	case MCP2210_STATUS_UNKNOWN_CMD:
 		desc = "unknown command";
 		ret = -EPROTO;
 		break;
@@ -1116,8 +1147,8 @@ static inline bool reschedule_delayed_work_ms(struct mcp2210_device *dev,
 
 static inline int all_ubrs_done(struct mcp2210_device *dev)
 {
-	return dev->eps[EP_OUT].state >= MCP2210_EP_STATE_COMPLETED
-	    && dev->eps[EP_IN].state >= MCP2210_EP_STATE_COMPLETED;
+	return dev->eps[EP_OUT].state >= MCP2210_STATE_COMPLETE
+	    && dev->eps[EP_IN].state >= MCP2210_STATE_COMPLETE;
 }
 
 /**
@@ -1133,7 +1164,7 @@ static int unlink_urbs(struct mcp2210_device *dev)
 	struct mcp2210_endpoint *ep;
 
 	for (ep = dev->eps; ep != &dev->eps[2]; ++ep) {
-		if (ep->state != MCP2210_EP_STATE_SUBMITTED)
+		if (ep->state != MCP2210_STATE_SUBMITTED)
 			continue;
 
 		ep->kill = 1;
@@ -1168,13 +1199,13 @@ static void kill_urbs(struct mcp2210_device *dev, unsigned long *irqflags)
 	if (irqflags)
 		spin_unlock_irqrestore(&dev->dev_spinlock, *irqflags);
 
-	if (out->state == MCP2210_EP_STATE_SUBMITTED)
+	if (out->state == MCP2210_STATE_SUBMITTED)
 		usb_kill_urb(out->urb);
-	if (in->state == MCP2210_EP_STATE_SUBMITTED)
+	if (in->state == MCP2210_STATE_SUBMITTED)
 		usb_kill_urb(in->urb);
 
-//	BUG_ON(out->state < MCP2210_EP_STATE_COMPLETED);
-//	BUG_ON(in->state < MCP2210_EP_STATE_COMPLETED);
+//	BUG_ON(out->state < MCP2210_STATE_COMPLETE);
+//	BUG_ON(in->state < MCP2210_STATE_COMPLETE);
 
 	if (irqflags)
 		spin_lock_irqsave(&dev->dev_spinlock, *irqflags);
@@ -1187,7 +1218,7 @@ __cold noinline static void fail_command(struct mcp2210_device *dev, int error,
 {
 	struct mcp2210_cmd *cmd = dev->cur_cmd;
 
-	cmd->state = MCP2210_CMD_STATE_DEAD;
+	cmd->state = MCP2210_STATE_DEAD;
 	cmd->status = error;
 	cmd->mcp_status = mcp_error;
 	unlink_urbs(dev);
@@ -1315,7 +1346,7 @@ static void delayed_work_callback(struct work_struct *work)
 			     urb_dir_str[ep->is_dir_in], ep->state,
 			     jiffies_to_msecs(age));
 
-		if (likely(ep->state == MCP2210_EP_STATE_SUBMITTED)) {
+		if (likely(ep->state == MCP2210_STATE_SUBMITTED)) {
 			/* this is the state we'll normally see if dev->cur_cmd is not
 			 * null.  Make sure the command hasn't timed out and then
 			 * exit. */
@@ -1386,7 +1417,7 @@ struct mcp2210_cmd *mcp2210_alloc_cmd(struct mcp2210_device *dev,
 	cmd->time_started	= 0;
 	cmd->delay	= 0;
 	cmd->mcp_status		= 0;
-	cmd->state		= MCP2210_CMD_STATE_NEW;
+	cmd->state		= MCP2210_STATE_NEW;
 	cmd->kill		= 0;
 	cmd->can_retry		= 0;
 	cmd->nonatomic		= 0;
@@ -1472,7 +1503,7 @@ static int check_response(struct mcp2210_device *dev)
 }
 
 
-/* urb_complete_bad - handles a bad condition in URB completion callback
+/* complete_urb_bad - handles a bad condition in URB completion callback
  *
  * must hold dev->dev_spinlock
  *
@@ -1482,7 +1513,7 @@ static int check_response(struct mcp2210_device *dev)
  * otherwise, the status returned in the URB
  */
 __cold noinline static void
-urb_complete_bad(struct mcp2210_device *dev, const int is_dir_in)
+complete_urb_bad(struct mcp2210_device *dev, const int is_dir_in)
 {
 	struct mcp2210_cmd *cmd = dev->cur_cmd;
 	struct mcp2210_endpoint *ep = &dev->eps[is_dir_in];
@@ -1530,7 +1561,7 @@ unlink_urbs:
 }
 
 
-static void urb_complete(struct urb *urb)
+static void complete_urb(struct urb *urb)
 {
 #if 0
 	/* alternatively, we can set the mcp2210_endpoint as the urb context */
@@ -1548,6 +1579,12 @@ static void urb_complete(struct urb *urb)
 	unsigned long irqflags;
 	int ret;
 	int lock_held;
+
+	if (!dev->cur_cmd) {
+		mcp2210_crit("I see the RPi usb host controller is fucking up "
+			     "again. I suggest you reboot.");
+		return;
+	}
 
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		BUG_ON(!dev);
@@ -1570,11 +1607,11 @@ static void urb_complete(struct urb *urb)
 		spin_lock_irqsave(&dev->dev_spinlock, irqflags);
 
 	if (unlikely(ep->kill)) {
-		ep->state = MCP2210_EP_STATE_DEAD;
+		ep->state = MCP2210_STATE_DEAD;
 		mcp2210_warn("kill complete for %s URB",
 			     urb_dir_str[is_dir_in]);
 
-		if (other_ep->state >= MCP2210_EP_STATE_COMPLETED)
+		if (other_ep->state >= MCP2210_STATE_COMPLETE)
 			goto bad;
 		else
 			goto exit_unlock;
@@ -1583,32 +1620,32 @@ static void urb_complete(struct urb *urb)
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		/* make sure that we came up with is_dir_in correctly */
 		BUG_ON(ep->urb != urb);
-		BUG_ON(cmd->state != MCP2210_CMD_STATE_SUBMITTED);
-		BUG_ON(ep->state != MCP2210_EP_STATE_SUBMITTED);
+		BUG_ON(cmd->state != MCP2210_STATE_SUBMITTED);
+		BUG_ON(ep->state != MCP2210_STATE_SUBMITTED);
 	}
 
-		if (IS_ENABLED(CONFIG_MCP2210_DEBUG) && is_dir_in) {
-			mcp2210_debug("-------------RESPONSE------------");
-			mcp2210_dump_urbs(dev, KERN_DEBUG, 2);
-		}
+	if (IS_ENABLED(CONFIG_MCP2210_DEBUG) && dump_urbs && is_dir_in) {
+		mcp2210_debug("-------------RESPONSE------------");
+		mcp2210_dump_urbs(dev, KERN_DEBUG, 2);
+	}
 
 
 	/* check for unlikely conditions and call cold function to handle them
 	 * if they occur */
 	if (dev->dead || urb->status || urb->actual_length != 64) {
-		urb_complete_bad(dev, is_dir_in);
+		complete_urb_bad(dev, is_dir_in);
 		goto bad;
 	}
 
-	ep->state = MCP2210_EP_STATE_COMPLETED;
+	ep->state = MCP2210_STATE_COMPLETE;
 
 	/* when receiving, we'll have a buffer that's in the endianness of the
 	 * chip */
-	if (!is_dir_in)
+	if (is_dir_in)
 		ep->is_mcp_endianness = 1;
 
 	switch (other_ep->state) {
-	case MCP2210_EP_STATE_COMPLETED: {
+	case MCP2210_STATE_COMPLETE: {
 		const struct mcp2210_cmd_type *type = cmd->type;
 
 		cmd->status = ret = check_response(dev);
@@ -1629,11 +1666,13 @@ static void urb_complete(struct urb *urb)
 			goto bad;
 		}
 
-		cmd->state = MCP2210_CMD_STATE_DONE;
+		cmd->state = MCP2210_STATE_COMPLETE;
 		if (type->complete_urb) {
 			ret = type->complete_urb(cmd);
-			mcp2210_debug("--------FINAL COMMAND STATE--------");
-			dump_cmd(KERN_DEBUG, 0, "cmd: ", cmd);
+			if (IS_ENABLED(CONFIG_MCP2210_DEBUG_VERBOSE) && dump_commands) {
+				mcp2210_debug("--------FINAL COMMAND STATE--------");
+				dump_cmd(KERN_DEBUG, 0, "cmd: ", cmd);
+			}
 		} else {
 		}
 
@@ -1645,11 +1684,11 @@ static void urb_complete(struct urb *urb)
 
 		break;
 	}
-	case MCP2210_EP_STATE_DEAD:
+	case MCP2210_STATE_DEAD:
 bad:
 		mcp2210_err("Command is now dead");
-		cmd->state = MCP2210_CMD_STATE_DEAD;
-		if (!cmd->status || cmd->status == -EINPROGRESS) {
+		cmd->state = MCP2210_STATE_DEAD;
+		if (unlikely(!cmd->status || cmd->status == -EINPROGRESS)) {
 			mcp2210_err("******** missing error code *******");
 			cmd->status = -EINVAL;
 		}
@@ -1666,7 +1705,7 @@ bad:
 			++dev->eps[EP_OUT].retry_count;
 			++dev->eps[EP_IN].retry_count;
 restart:
-			cmd->state = MCP2210_CMD_STATE_NEW;
+			cmd->state = MCP2210_STATE_NEW;
 			++cmd->repeat_count;
 			dev->eps[EP_OUT].state = 0;
 			dev->eps[EP_IN].state = 0;
@@ -1705,15 +1744,15 @@ static int submit_urb(struct mcp2210_device *dev, struct mcp2210_endpoint *ep,
 	ret = usb_submit_urb(ep->urb, gfp_flags);
 	if (unlikely(ret)) {
 //		const u8 is_dir_in = ep->is_dir_in;
-		ep->state = MCP2210_EP_STATE_DEAD;
-		dev->cur_cmd->state = MCP2210_CMD_STATE_DEAD;
+		ep->state = MCP2210_STATE_DEAD;
+		dev->cur_cmd->state = MCP2210_STATE_DEAD;
 
 		mcp2210_err("usb_submit_urb failed for %s URB %de",
 			    urb_dir_str[ep->is_dir_in], ret);
 		return ret;
 	}
 	ep->submit_time = jiffies;
-	ep->state = MCP2210_EP_STATE_SUBMITTED;
+	ep->state = MCP2210_STATE_SUBMITTED;
 
 	return 0;
 }
@@ -1745,7 +1784,7 @@ static int submit_urbs(struct mcp2210_cmd *cmd, gfp_t gfp_flags)
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG_VERBOSE))
 		dump_cmd(KERN_DEBUG, 0, "submit_urbs: cmd = ", cmd);
 
-	if (unlikely(cmd->state != MCP2210_CMD_STATE_NEW))
+	if (unlikely(cmd->state != MCP2210_STATE_NEW))
 		mcp2210_warn("unexpected: cmd->state is %u", cmd->state);
 
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG_VERBOSE)) {

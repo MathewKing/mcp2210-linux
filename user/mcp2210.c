@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 //#include <sys/time.h>
 #include <stdint.h>
 #include <unistd.h>
@@ -32,6 +33,7 @@
 #include <limits.h>
 
 #include "mcp2210-user.h"
+#include "settings.h"
 
 static const char *argv0;
 
@@ -40,6 +42,54 @@ static void show_usage(void);
 static int eeprom_read(int argc, char *argv[]);
 static int eeprom_write(int argc, char *argv[]);
 static int eeprom_read_write(int is_read, int argc, char *argv[]);
+
+static const char *hex_digits="0123456789abcdef";
+
+static inline char hex_digit(int v) {
+	return hex_digits[v & 0xf];
+}
+
+void dump_hex(FILE *dest, const u8* src, size_t size) {
+	const unsigned byte_per_row = 32;
+	const unsigned space_every = 4;
+	const size_t ascii_start = byte_per_row * 2 + (byte_per_row + space_every - 1) / space_every + 1;
+	char buf[128];
+	unsigned i;
+
+	assert(sizeof(buf) >= ascii_start + byte_per_row + 2);
+//	printf("%lu >= %lu\n", sizeof(buf), ascii_start + byte_per_row + 2);
+
+	memset(buf, 0, sizeof(buf));
+
+	buf[ascii_start - 1] = '|';
+	buf[ascii_start + byte_per_row ] = '|';
+	buf[ascii_start + byte_per_row + 1] = 0;
+	for (i = 0; i < size;) {
+		u8 b = src[i];
+		unsigned col = i % byte_per_row;
+		size_t off = col * 2 + col / 4;
+
+		buf[off++] = hex_digit(b >> 4);
+		buf[off++] = hex_digit(b);
+		buf[off++] = ' ';
+		buf[ascii_start + col] = (isprint(b)) ? b : '.';
+
+		++i;
+		if ((!(i % byte_per_row))) {
+			fprintf(dest, "%s\n", buf);
+		} else if (i == size) {
+			ssize_t fill1_size = ascii_start - off - 1;
+			ssize_t fill2_size = byte_per_row - col - 1;
+
+			if (fill1_size > 0)
+				memset(&buf[off], ' ', fill1_size);
+			if (fill2_size > 0)
+				memset(&buf[ascii_start + col + 1], ' ', fill2_size);
+			fprintf(dest, "%s\n", buf);
+			break;
+		}
+	}
+}
 
 
 static struct config {
@@ -50,15 +100,16 @@ static struct config {
 	const char *filein;
 	const char *fileout;
 	struct {
-		/* u8  */ uint addr;
-		/* u16 */ uint size;
+		u8 addr;
+		u16 size;
 	} eeprom;
 	struct {
 		const char *name;
-		/* u8 */ uint mode;
-		/* u8 */ uint  bits;
-		/* u32 */ uint  speed;
-		/* u32 */ uint  delay;
+		u8 mode;
+		u32 speed_hz;
+		u16 delay_usecs;
+		u8 bits_per_word;
+		u8 cs_change;
 	} spi;
 } config = {
 	.verbose = 1,
@@ -72,11 +123,12 @@ static struct config {
 		.size = 0x100,
 	},
 	.spi = {
-		.name = "/dev/spidev1.1",
-		.mode = 3,
-		.bits = 8,
-		.speed = 10000,
-		.delay = 0,
+		.name		= "/dev/spidev1.1",
+		.mode		= 0,
+		.speed_hz	= 0,
+		.delay_usecs	= 0,
+		.bits_per_word	= 0,
+		.cs_change	= 0,
 	},
 };
 /**
@@ -105,56 +157,81 @@ int get_param_base_and_start(const char **str)
 	}
 }
 
-/**
- * @returns zero on success, non-zero if the string didn't represent a clean
- *          number
- *
- * FIXME: wont be correct for u32 on platforms where sizeof(int) == 2
- */
-static int get_uint_param(const char *str, uint *dest, uint min, uint max)
+static void _get_ull_param(const char *str, unsigned long long *dest,
+			   size_t size,
+			   unsigned long long min,
+			   unsigned long long max)
 {
 	const char *start = str;
 	char *endptr;
 	int base = get_param_base_and_start(&start);
 
-	*dest = strtoul(start, &endptr, base);
-	if (*endptr) {
-		fprintf(stderr, "bad number: %s\n", str);
-		exit (1);
-	}
+	errno = 0;
+	if (size == 8)
+		*dest = strtoull(start, &endptr, base);
+	else
+		*dest = strtoul(start, &endptr, base);
+
+	if (errno)
+		fatal_error("bad number: %s", str);
 
 	if (*dest < min || *dest > max) {
-		fprintf(stderr, "number out of range: %s should be between %u and %u\n", str, min, max);
-		exit (1);
+		errno = ERANGE;
+		fatal_error("%s should be between %llu and %llu", str, min, max);
 	}
-
-	return *endptr;
-}
-
-static int get_bool_param(const char *str)
-{
-	uint dest;
-	get_uint_param(str, &dest, 0, 1);
-	return dest;
 }
 
 /**
  * @returns zero on success, non-zero if the string didn't represent a clean
  *          number
- * FIXME: assumes u64 is unsigned long long
  */
-static inline int get_u64_param(const char *str, u64 *dest)
+static __always_inline int _get_unsigned_param(const char *str, void *dest,
+					       size_t size,
+					       unsigned long long min,
+					       unsigned long long max)
 {
-	char *endptr;
-	int base = get_param_base_and_start(&str);
+	unsigned long long valull;
 
-	*dest = strtoull(str, &endptr, base);
-	if (*endptr) {
-		fprintf(stderr, "bad number: %s\n", str);
-		exit (1);
-	}
+	/* debug sanity-check sizes */
+	assert(min <= max);
 
-	return *endptr;
+	if (size == sizeof(unsigned char))
+		assert(max <= UCHAR_MAX);
+	else if (size == sizeof(unsigned short))
+		assert(max <= USHRT_MAX);
+	else if (size == sizeof(unsigned int))
+		assert(max <= UINT_MAX);
+	else if (size == sizeof(unsigned long))
+		assert(max <= ULONG_MAX);
+	else if (size == sizeof(unsigned long long))
+		assert(max <= ULLONG_MAX);
+
+	_get_ull_param(str, &valull, size, min, max);
+
+	if (size == sizeof(unsigned char))
+		*(unsigned char *)dest = valull;
+	else if (size == sizeof(unsigned short))
+		*(unsigned short *)dest = valull;
+	else if (size == sizeof(unsigned int))
+		*(unsigned int *)dest = valull;
+	else if (size == sizeof(unsigned long))
+		*(unsigned long *)dest = valull;
+	else if (size == sizeof(unsigned long long))
+		*(unsigned long long *)dest = valull;
+
+	return 0;
+}
+
+#define get_unsigned_param(str, dest, min, max) \
+	_get_unsigned_param((str), (dest), sizeof(*(dest)), (min), (max))
+
+
+
+static inline u8 get_bool_param(const char *str)
+{
+	u8 dest;
+	get_unsigned_param(str, &dest, 0, 1);
+	return dest;
 }
 
 
@@ -230,24 +307,7 @@ int put_output_data(const void *src, size_t size) {
 	return ret;
 }
 
-static const struct mcp2210_chip_settings static_chip_settings =  {
-	.pin_mode = {
-		MCP2210_PIN_SPI,
-		MCP2210_PIN_GPIO,
-		MCP2210_PIN_UNUSED,
-		MCP2210_PIN_UNUSED,
-		MCP2210_PIN_UNUSED,
-		MCP2210_PIN_UNUSED,
-		MCP2210_PIN_UNUSED,
-		MCP2210_PIN_UNUSED,
-		MCP2210_PIN_UNUSED,
-	},
-	.gpio_value		= 2,
-	.gpio_direction		= 2,
-	.other_settings		= 0,
-	.nvram_access_control	= 0,
-	.password = {0, 0, 0, 0, 0, 0, 0, 0},
-};
+
 
 int get_config(int argc, char *argv[]) {
 	struct mcp2210_ioctl_data *data;
@@ -278,7 +338,7 @@ int get_config(int argc, char *argv[]) {
 	if (cfg->state.have_config)
 		dump_board_config("", 0, ".config = ", &cfg->config);
 
-	ret = creek_encode(&cfg->config, &static_chip_settings, buf, sizeof(buf));
+	ret = creek_encode(&cfg->config, &my_chip_settings, buf, sizeof(buf));
 	if (ret < 0) {
 		errno = -ret;
 		fatal_error("creek_encode");
@@ -291,70 +351,62 @@ exit_free:
 	return ret;
 }
 
+#if 0
+struct mcp2210_state {
+	u8 have_chip_settings:1;
+	u8 have_power_up_chip_settings:1;
+	u8 have_spi_settings:1;
+	u8 have_power_up_spi_settings:1;
+	u8 have_usb_key_params:1;
+	u8 have_config:1;
+	u8 is_spi_probed:1;
+	u8 is_gpio_probed:1;
+	struct mcp2210_chip_settings chip_settings;
+	struct mcp2210_chip_settings power_up_chip_settings;
+	struct mcp2210_spi_xfer_settings spi_settings;
+	struct mcp2210_spi_xfer_settings power_up_spi_settings;
+	struct mcp2210_usb_key_params usb_key_params;
+	int cur_spi_config;
+	u16 idle_cs;
+	u16 active_cs;
+	unsigned long spi_delay_per_xfer;
+	unsigned long spi_delay_per_kb;
+	unsigned long spi_delay_between_xfers;
+};
+#endif
 
-static const struct mcp2210_board_config static_board_config = {
-	.pins = {
-		{
-			.mode = MCP2210_PIN_SPI,
-			.body.spi.max_speed_hz = 20000,
-			.body.spi.min_speed_hz = 2000,
-			.body.spi.mode = SPI_MODE_3,
-			.body.spi.bits_per_word = 8,
-/* CS must be de-asserted between each byte in a transaction.  You send zeros
- * when you are receiving the response.
- *
- * fCK,MAX     | Maximum SPI clock frequency  | 5  MHz max
- * tsetCS      | Chip select setup time       | 350 ns min
- * trCK & tfCK | SPI clock rise and fall time | 25  ns max (@CL = 30 pF)
- * thCK & tlCK | SPI clock high and low time  | 75  ns min
- * tholCS      | Chip select hold time        | 10  ns min
- * tdisCS      | Deselect time                | 800 ns min
- * tsetSDI     | Data input setup time        | 25  ns min
- * tholSDI     | Data input hold time         | 20  ns min
- * tenSDO      | Data output enable time      | 38  ns max
- * tdisSDO     | Data output disable time     | 47  ns max
- * tvSDO       | Data output valid time       | 57  ns max
- */
-			.body.spi.cs_to_data_delay = 1,
-			.body.spi.last_byte_to_cs_delay = 1,
-			.body.spi.delay_between_bytes = 1,
-			.body.spi.delay_between_xfers = 1,
-			.modalias = "spidev",
-			.name = "L6470",
-
-			/*.desc = "L6470 dSPIN: Fully integrated microstepping "
-				"motor driver with motion engine and SPI" */
-		}, {
-			.mode = MCP2210_PIN_GPIO,
-			.body.gpio.direction = 1,
-			.body.gpio.init_value = 1,
-			.name = "some pin",
-		}, {
-			.mode = MCP2210_PIN_UNUSED,
-			.name="fuck me",
-		}, {
-			.mode = MCP2210_PIN_UNUSED,
-		}, {
-			.mode = MCP2210_PIN_UNUSED,
-		}, {
-			.mode = MCP2210_PIN_UNUSED,
-		}, {
-			.mode = MCP2210_PIN_UNUSED,
-		}, {
-			.mode = MCP2210_PIN_UNUSED,
-		}, {
-			.mode = MCP2210_PIN_UNUSED,
-		}
-	},
-	.strings_size = 0,
-//	.strings = "",
+enum settings_mask {
+	SETTINGS_CHIP_SETTINGS		= 1 << 0,
+	SETTINGS_POWER_UP_CHIP_SETTINGS	= 1 << 1,
+	SETTINGS_SPI_SETTINGS		= 1 << 2,
+	SETTINGS_POWER_UP_SPI_SETTINGS	= 1 << 3,
+	SETTINGS_USB_KEY_PARAMS		= 1 << 4,
+	SETTINGS_BOARD_CONFIG		= 1 << 5,
 };
 
 int set_config(int argc, char *argv[]) {
 	struct mcp2210_ioctl_data *data;
 	struct mcp2210_ioctl_data_config *cfg;
-	const size_t struct_size = IOCTL_DATA_CONFIG_SIZE + 0x400;
+	size_t struct_size = IOCTL_DATA_CONFIG_SIZE;
+	size_t strings_size = 0;
 	int ret = 0;
+
+	u8 mask;
+
+	get_unsigned_param(argv[0], &mask, 0, 0x3f);
+
+	if (mask & SETTINGS_BOARD_CONFIG) {
+		unsigned i;
+
+		for (i = 0; i < MCP2210_NUM_PINS; ++i) {
+			const struct mcp2210_pin_config *pin = &my_board_config.pins[i];
+			if (pin->name && *pin->name)
+				strings_size += strlen(pin->name) + 1;
+			if (pin->modalias && *pin->modalias)
+				strings_size += strlen(pin->modalias) + 1;
+		}
+		struct_size += strings_size;
+	}
 
 	data = malloc(struct_size);
 	if (!data) {
@@ -365,9 +417,54 @@ int set_config(int argc, char *argv[]) {
 	memset(data, 0, struct_size);
 	data->struct_size = struct_size;
 	cfg = &data->body.config;
-	cfg->config.strings_size = 0x400;
-	copy_board_config(&cfg->config, &static_board_config, 0);
+
+	if (mask & SETTINGS_CHIP_SETTINGS) {
+		cfg->state.have_chip_settings = 1;
+		memcpy(&cfg->state.chip_settings,
+		       &my_chip_settings,
+		       sizeof(my_chip_settings));
+	}
+
+	if (mask & SETTINGS_POWER_UP_CHIP_SETTINGS) {
+		cfg->state.have_power_up_chip_settings = 1;
+		memcpy(&cfg->state.power_up_chip_settings,
+		       &my_power_up_chip_settings,
+		       sizeof(my_power_up_chip_settings));
+	}
+
+	if (mask & SETTINGS_SPI_SETTINGS) {
+		cfg->state.have_spi_settings = 1;
+		memcpy(&cfg->state.spi_settings,
+		       &my_spi_settings,
+		       sizeof(my_spi_settings));
+	}
+
+	if (mask & SETTINGS_POWER_UP_SPI_SETTINGS) {
+		cfg->state.have_power_up_spi_settings = 1;
+		memcpy(&cfg->state.power_up_spi_settings,
+		       &my_power_up_spi_settings,
+		       sizeof(my_power_up_spi_settings));
+	}
+
+	if (mask & SETTINGS_USB_KEY_PARAMS) {
+		cfg->state.have_usb_key_params = 1;
+		memcpy(&cfg->state.usb_key_params,
+		       &my_usb_key_params,
+		       sizeof(my_usb_key_params));
+	}
+
+	if (mask & SETTINGS_BOARD_CONFIG) {
+		cfg->state.have_config = 1;
+		cfg->config.strings_size = strings_size;
+		copy_board_config(&cfg->config, &my_board_config, 0);
+	}
+
+	dump_state("", 0, "state = ", &cfg->state);
+	if (cfg->state.have_config)
+		dump_board_config("", 0, ".config = ", &cfg->config);
+
 	ret = mcp2210_do_ioctl(config.name, MCP2210_IOCTL_CONFIG_SET, data);
+
 	free(data);
 	return ret;
 }
@@ -392,9 +489,9 @@ static int eeprom_read_write(int is_read, int argc, char *argv[]) {
 	for (i = 0; i < argc; ++i) {
 		const char *arg = argv[i];
 		if (!strncmp(arg, "addr=", 5)) {
-			get_uint_param(&arg[5], &addr, 0, 0xff);
+			get_unsigned_param(&arg[5], &addr, 0, 0xff);
 		} else if (!strncmp(arg, "size=", 5)) {
-			get_uint_param(&arg[5], &size, 1, 0x100);
+			get_unsigned_param(&arg[5], &size, 1, 0x100);
 		} else {
 			fprintf(stderr, "what you talkin' 'bout Wilis? %s\n", arg);
 			show_usage();
@@ -438,6 +535,250 @@ exit_free:
 	free(data);
 	return ret;
 }
+
+struct spi_msg {
+	size_t struct_size;
+	u8 *buf;
+	size_t buf_size;
+	unsigned num_xfers;
+	struct spi_ioc_transfer xfers[0];
+};
+
+struct spi_msg *parse_msgs(int argc, char *argv[]) {
+	size_t size;
+	const char *p;
+	struct spi_msg *msg;
+	unsigned next_buf_off;
+	struct spi_ioc_transfer *xfer;
+	struct spi_msg proto;
+
+
+	if (argc != 1) {
+		fprintf(stderr, "too many arguments");
+		return ERR_PTR(-EINVAL);
+	}
+
+	if (!(**argv)) {
+		fprintf(stderr, "msgs string empty");
+		return ERR_PTR(-EINVAL);
+	}
+
+	/* Parse the message string and determine the number of messages as
+	 * well as the sum of message sizes */
+	memset(&proto, 0, sizeof(proto));
+	p = *argv;
+	size = 0;
+	while (1) {
+		u8 val;
+
+		if (*p == ',' || !*p) {
+			++proto.num_xfers;
+			if (!size)
+				fprintf(stderr, "WARNING: zero-sized transfer\n");
+
+			proto.buf_size += size;
+
+			if (!*p || !p[1])
+				break;
+
+			size = 0;
+			++p;
+			continue;
+		}
+
+		if (isspace(*p)) {
+			++p;
+			continue;
+		}
+
+		if (sscanf(p, "%02hhx", &val) != 1)
+			goto exit_bad_fmt;
+
+		p += 2;
+		++size;
+	}
+
+	proto.buf_size *= 2;			/* separate tx & rx buffers */
+	proto.struct_size = sizeof(struct spi_msg)
+		    + sizeof(struct spi_ioc_transfer) * proto.num_xfers
+		    + proto.buf_size;
+
+	/* allocate & init msg object */
+	if (!(msg = malloc(proto.struct_size)))
+		return ERR_PTR(-ENOMEM);
+	memset(msg, 0, proto.struct_size);
+
+	msg->struct_size = proto.struct_size;
+	msg->buf	  = &((u8 *)msg)[proto.struct_size - proto.buf_size];
+	msg->buf_size	  = proto.buf_size;
+	msg->num_xfers	  = proto.num_xfers;
+
+
+	/* Parse again and init each xfer (minus tx_buf contents) */
+	p = *argv;
+	size = 0;
+	next_buf_off = 0;
+	xfer = msg->xfers;
+	while (1) {
+		u8 val;
+
+		if (*p == ',' || !*p) {
+			xfer->tx_buf	    = (ulong)&msg->buf[next_buf_off];
+			next_buf_off	   += size;
+			xfer->rx_buf	    = (ulong)&msg->buf[next_buf_off];
+			next_buf_off	   += size;
+			xfer->len	    = size;
+			xfer->speed_hz	    = config.spi.speed_hz;
+			xfer->delay_usecs   = config.spi.delay_usecs;
+			xfer->bits_per_word = config.spi.bits_per_word;
+			xfer->cs_change	    = config.spi.cs_change;
+			++xfer;
+
+			if (!*p || !p[1])
+				break;
+			size = 0;
+			++p;
+			continue;
+		}
+
+		if (isspace(*p)) {
+			++p;
+			continue;
+		}
+
+		if (sscanf(p, "%02hhx", &val) != 1)
+			goto exit_bad_fmt;
+
+		p += 2;
+		++size;
+	};
+	assert(xfer == &msg->xfers[msg->num_xfers]);
+	assert(next_buf_off == msg->buf_size);
+
+	/* Parse a third time and populate contents of each xfer tx_buf */
+	p = *argv;
+	size = 0;
+	next_buf_off = 0;
+	xfer = msg->xfers;
+	while (1) {
+		u8 val;
+
+		if (*p == ',' || !*p) {
+			assert(xfer->len == size);
+
+			if (!*p || !p[1])
+				break;
+
+			++xfer;
+			size = 0;
+			++p;
+			continue;
+		}
+
+		if (isspace(*p)) {
+			++p;
+			continue;
+		}
+
+		if (sscanf(p, "%02hhx", &val) != 1)
+			goto exit_bad_fmt;
+
+		p += 2;
+		((u8*)(ulong)(xfer->tx_buf))[size++] = val;
+	};
+
+	return msg;
+
+exit_bad_fmt:
+	fprintf(stderr, "bad msg format");
+	free (msg);
+	return ERR_PTR(-EINVAL);
+}
+
+static __always_inline void _spidev_set(int fd, unsigned long request, void *value, u8 size, const char *desc) {
+	const unsigned long magic	= _IOC_TYPE(request);
+	const unsigned long ordinal	= _IOC_NR(request);
+	const unsigned long sz		= _IOC_SIZE(request);
+	const unsigned long read_req	= _IOC(_IOC_READ, magic, ordinal, sz);
+	const unsigned long write_req	= _IOC(_IOC_WRITE, magic, ordinal, sz);
+	union {
+		u8 u8;
+		u16 u16;
+		u32 u32;
+		u64 u64;
+	} val;
+	u64 cur_val64;
+	u64 target_val64;
+
+	assert(sz == size);
+
+	if (ioctl(fd, read_req, &val) < 0)
+		fatal_error("failed to read %s", desc);
+
+	switch (size) {
+	case 1: cur_val64 = val.u8;  target_val64 = *(u8 *)value; break;
+	case 2: cur_val64 = val.u16; target_val64 = *(u16*)value; break;
+	case 4: cur_val64 = val.u32; target_val64 = *(u32*)value; break;
+	case 8: cur_val64 = val.u64; target_val64 = *(u64*)value; break;
+	default: assert(0);
+	};
+
+	/* only call the spi_setup if needed */
+	if (cur_val64 != target_val64) {
+		if (ioctl(fd, write_req, value) < 0)
+			fatal_error("failed to set %s", desc);
+	}
+}
+
+#define spidev_set(fd, request, value, desc) 				\
+	do {								\
+		if (!(*(value)))					\
+			break;						\
+		_spidev_set(fd, request, value, sizeof(*value), desc);	\
+	} while (0)
+
+static int spidev_send(int argc, char *argv[]) {
+	int ret = 0;
+	int fd;
+	unsigned i;// = _IOR(1,2,u8);
+	struct spi_msg *msg;
+
+	msg = parse_msgs(argc, argv);
+	if (IS_ERR(msg)) {
+		if (PTR_ERR(msg) == -EINVAL) {
+			show_usage();
+			return -1;
+		}
+		errno = -PTR_ERR(msg);
+		fatal_error("failed to parse messages");
+	}
+
+	for (i = 0; i < msg->num_xfers; ++i) {
+		fprintf(stderr, "request %d:\n", i);
+		dump_hex(stderr, (u8*)(ulong)msg->xfers[i].tx_buf, msg->xfers[i].len);
+	}
+
+	if ((fd = open(config.spi.name, O_RDWR)) < 0)
+		fatal_error("open failed for %s", config.spi.name);
+
+	spidev_set(fd, SPI_IOC_RD_MODE, &config.spi.mode, "spi mode");
+	spidev_set(fd, SPI_IOC_RD_MAX_SPEED_HZ, &config.spi.speed_hz, "spi max speed");
+	//spidev_set(fd, SPI_IOC_RD_MODE, &config.spi.delay_usecs, "spi mode");
+	spidev_set(fd, SPI_IOC_RD_BITS_PER_WORD, &config.spi.bits_per_word, "spi bits per word");
+	//spidev_set(fd, SPI_IOC_RD_MODE, &config.spi.cs_change, "spi mode");
+
+	if (ioctl(fd, SPI_IOC_MESSAGE(msg->num_xfers), msg->xfers) < 0)
+		fatal_error("spi message failed");
+
+	for (i = 0; i < msg->num_xfers; ++i) {
+		fprintf(stderr, "response %d:\n", i);
+		dump_hex(stderr, (u8*)(ulong)msg->xfers[i].rx_buf, msg->xfers[i].len);
+	}
+	close(fd);
+	free (msg);
+	return ret;
+}
+
 #if 0
 int asdfasdfasdfqwerwerwerxcvxcvxcv(void) {
 	struct mcp2210_ioctl_data *data;
@@ -473,7 +814,7 @@ int asdfasdfasdfqwerwerwerxcvxcvxcv(void) {
 
 	dump_board_config("", 0, ".config = ", &cfg->config);
 #if 0
-	for (i = 0; i < 9; ++i) {
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		strbuf[1] = '0' + i;
 		dump_pin_config("", 2, strbuf, &cfg.config.pins[i]);
 	}
@@ -559,6 +900,7 @@ int asdfasdfasdfqwerwerwerxcvxcvxcv(void) {
 struct command {
 	const char *name;
 	int min_args;
+	int max_args;
 	const struct command *sub_cmd;
 	int (*func)(int argc, char *argv[]);
 };
@@ -608,6 +950,8 @@ static const struct command sub_cmd_list_get[] = {
 static const struct command sub_cmd_list_set[] = {
 	{
 		.name = "config",
+		.min_args = 1,
+		.max_args = 1,
 		.func = set_config,
 	}, {}
 };
@@ -655,8 +999,8 @@ static const struct command command_list[] = {
 		.func	  = not_yet_implemented,
 	}, {
 		.name	  = "spi",
-		.min_args = 0,
-		.func	  = not_yet_implemented,
+		.min_args = 1,
+		.func	  = spidev_send,
 	}, { },
 
 };
@@ -744,14 +1088,13 @@ static int process_args(int argc, char *argv[])
 		/* SPI options */
 		case 'D': config.spi.name = optarg;			break;
 		case 's':
-			get_uint_param(optarg, &config.spi.speed,
-				       MCP2210_MIN_SPEED, MCP2210_MAX_SPEED);
+			get_unsigned_param(optarg, &config.spi.speed_hz, MCP2210_MIN_SPEED, MCP2210_MAX_SPEED);
 			break;
 		case 'e':
-			get_uint_param(optarg, &config.spi.delay, 0, UINT_MAX);
+			get_unsigned_param(optarg, &config.spi.delay_usecs, 0, UINT_MAX);
 			break;
 		case 'b':
-			get_uint_param(optarg, &config.spi.bits, 8, 8);
+			get_unsigned_param(optarg, &config.spi.bits_per_word, 8, 8);
 			break;
 		case 'l': config.spi.mode |= SPI_LOOP;			break;
 		case 'H': if (!get_bool_param(optarg))
@@ -775,13 +1118,18 @@ int main(int argc, char *argv[])
 {
 	int ret;
 
+//	u8 buf[5] = {1,2,64,65,31};
+//	dump_hex(stderr, buf, sizeof(buf));
+//	ret = 0;
+//if (0) {
 	argv0 = argv[0];
 	if ((ret = process_args(argc, argv))) {
+		if (ret < 0)
+			ret = -ret;
 		errno = ret;
 		perror("main");
-		errno = -ret;
-		perror("main");
 	}
+//}
 	return ret;
 }
 
