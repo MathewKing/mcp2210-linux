@@ -898,14 +898,6 @@ void mcp2210_disconnect(struct usb_interface *intf)
 	printk("mcp2210_remove\n");
 }
 
-
-#if 0
-int (*ioctl) (struct usb_interface *intf, unsigned int code, void *buf)
-int (*suspend) (struct usb_interface *intf, u32 state)
-int (*resume) (struct usb_interface *intf)
-#endif
-
-
 static inline int u16_get_bit(unsigned bit, u16 raw)
 {
 	BUILD_BUG_ON(bit >= sizeof(raw) * 8);
@@ -1250,7 +1242,6 @@ static void delayed_work_callback(struct work_struct *work)
 	unsigned long start_time = jiffies;
 	int ret;
 
-	/* static const */ /* long TIMEOUT_DRAIN = msecs_to_jiffies(250) + 1; */
 	/* static const */ long TIMEOUT_URB = msecs_to_jiffies(750) + 1;
 	/* static const */ long TIMEOUT_HUNG = msecs_to_jiffies(8000);
 
@@ -1385,8 +1376,6 @@ exit_unlock_dev:
 /******************************************************************************
  * Base command & URB functions
  */
-
-//static void init_cmd(struct mcp2210_cmd *cmd, struct mcp2210_device *dev, const struct mcp2210_cmd_type *type){}
 
 /**
  * mcp2210_alloc_cmd -- allocate a new (generic) command
@@ -1601,7 +1590,7 @@ static void complete_urb(struct urb *urb)
 	 * is that usb_unlink_urb can call the completion handlers */
 	lock_held = !atomic_read(&ep->unlink_in_process);
 
-	mcp2210_info("%s, state: %#02x urb->status: %de, lock_held: %d, kill: %d", urb_dir_str[is_dir_in], ep->state, urb->status, lock_held, ep->kill);
+	mcp2210_debug("%s, state: %#02x urb->status: %de, lock_held: %d, kill: %d", urb_dir_str[is_dir_in], ep->state, urb->status, lock_held, ep->kill);
 
 	if (!lock_held)
 		spin_lock_irqsave(&dev->dev_spinlock, irqflags);
@@ -1760,7 +1749,6 @@ static int submit_urb(struct mcp2210_device *dev, struct mcp2210_endpoint *ep,
 static int submit_urbs(struct mcp2210_cmd *cmd, gfp_t gfp_flags)
 {
 	struct mcp2210_device *dev;
-//	unsigned long irqflags;
 	int ret = 0;
 
 	BUG_ON(!cmd || !cmd->dev);

@@ -541,7 +541,7 @@ static long mcp2210_ioctl_config_set(struct mcp2210_device *dev, struct ioctl_re
 		process_commands(dev, GFP_ATOMIC, 1);
 	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
 
-	/* help command execute more quickly */
+	/* help command execute more quickly? */
 	schedule();
 
 	if (!ret) {

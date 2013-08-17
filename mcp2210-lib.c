@@ -43,7 +43,8 @@
 
 
 static void copy_board_config_string(const char *strings, size_t strings_size,
-				     size_t *pos, const char **dest, const char *src)
+				     size_t *pos, const char **dest,
+				     const char *src)
 {
 	ssize_t buf_size = strings_size - *pos;
 
@@ -166,7 +167,6 @@ uint creek_get_bits(struct bit_creek *bs, uint num_bits) {
 
 	return ret;
 }
-//EXPORT_SYMBOL_GPL(creek_get_bits);
 
 int creek_put_bits(struct bit_creek *bs, uint value, uint num_bits) {
 	const uint MAX_BITS = sizeof(uint) * 8;
@@ -204,13 +204,13 @@ int creek_put_bits(struct bit_creek *bs, uint value, uint num_bits) {
 
 	return 0;
 }
-//EXPORT_SYMBOL_GPL(creek_put_bits);
 
 /**
  * unpack_uint_opt - Read and unpack an optional packed uint value from a
  * 		     bit stream
  */
-static inline uint unpack_uint_opt(struct bit_creek *src, uint value_bits, uint scale_bits, uint def)
+static inline uint unpack_uint_opt(struct bit_creek *src, uint value_bits,
+				   uint scale_bits, uint def)
 {
 	if (creek_get_bits(src, 1)) {
 		uint data = creek_get_bits(src, value_bits + scale_bits);
@@ -218,34 +218,13 @@ static inline uint unpack_uint_opt(struct bit_creek *src, uint value_bits, uint 
 	} else
 		return def;
 }
-#if 0
-static size_t get_stringasdf() {
-	for (i = 0; i < dec.str_count; ) {
-		u8 c = creek_get_bits(&bs, 8);
-		if (c & 0x80) {
-			++i;
-			dec.str_size += 2;
-		} else
-			dec.str_size += 1;
-		c &= 0x7f;
-		if (unlikely(c < ' ' || c == 0x7f)) {
-			ret = -EPROTO;
-			goto exit_free;
-		}
-	}
-
-	if (bs.overflow) {
-		ret = -EPROTO;
-		goto exit_free;
-	}
-}
-#endif
 
 /**
  * decode_strings - this could be done far more efficiently with arch-specific
  * code but nobody cares.
  */
-static const char **decode_strings(char *dest, size_t dest_size, struct bit_creek *src, uint num_strings)
+static const char **decode_strings(char *dest, size_t dest_size,
+				   struct bit_creek *src, uint num_strings)
 {
 	const char **index = kzalloc(sizeof(char *) * num_strings, GFP_KERNEL);
 	const char *  const dend = &dest[dest_size];
@@ -385,9 +364,7 @@ struct mcp2210_board_config *creek_decode(
 	}
 
 	/* record start of strings and find out how many bytes we need */
-	/* FIXME TODO HACK WARNING FUCK! this is fucked up somehow :( */
 	strings_start = bs.pos;
-//	printf("strlen = %u, str = %s\n", (uint)strlen(bs.start + strings_start / 8), bs.start + strings_start / 8);
 	for (i = 0; i < dec.str_count; ) {
 		u8 c = creek_get_bits(&bs, 8);
 		if (c & 0x80) {
@@ -407,8 +384,10 @@ struct mcp2210_board_config *creek_decode(
 		goto exit_free;
 	}
 
-	/* now that we know how much room we need for strings we can allocate & init our return value */
-	if (!(board_config = kzalloc(sizeof(struct mcp2210_board_config) + dec.str_size, GFP_KERNEL)))
+	/* now that we know how much room we need for strings we can allocate &
+	 * init our return value */
+	if (!(board_config = kzalloc(sizeof(struct mcp2210_board_config)
+				   + dec.str_size, GFP_KERNEL)))
 		return ERR_PTR(-ENOMEM);
 
 	board_config->strings_size = dec.str_size;
@@ -430,62 +409,16 @@ struct mcp2210_board_config *creek_decode(
 		dec.string_index = NULL;
 		goto exit_free;
 	}
-#if 0
-	/* TODO: Maybe this loop can be cleaned up some, possibly made into its own function */
-	dec.string_index[0] = strings = (char *)board_config->strings;
-	for (i = 0, j = 0; i < dec.str_count && j < dec.str_size;) {
-		u8 c = creek_get_bits(&bs, 8);
-
-		strings[j++] = (char)(c & 0x7f);
-		if (c & 0x80) {
-			if (unlikely(j == dec.str_size)) {
-				ret = -EPROTO;
-				goto exit_free;
-			}
-
-			strings[j++] = 0;
-			if (++i == dec.str_count)
-				break;
-
-			dec.string_index[i] = &strings[j];
-		}
-	}
-#endif
-#if 0
-	printk("fuck i=%u, dec.str_count=%u\n", i, dec.str_count);
-	printk("fuck j=%u, dec.str_size=%u\n", j, dec.str_size);
-	for (j = 0; j < dec.str_size; ++j) {
-		if (! j % 16)
-			puts("\n");
-		printf("%02hhx ", dec.strings[j]);
-	}
-			puts("\n");
-	for (j = 0; j < dec.str_size; ++j) {
-		printf("%c", dec.strings[j]);
-	}
-		puts("\n");
-
-	{
-		const char *fuck = &bs.start[strings_start / 8];
-		for (j = 0; j < 32; ++j) {
-			printf("%c %s", fuck[j], j % 4 == 3 ? " " : "");
-		}
-		puts("\n");
-		for (j = 0; j < 32; ++j) {
-			printf("%02hhx%s", fuck[j], j % 4 == 3 ? " " : "");
-		}
-		puts("\n");
-	}
-			puts("\n");
-#endif
 
 	/* now populate our mcp2210_board_config with the string pointers */
 	board_config->strings_size = dec.str_size;
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		if (dec.name_index[i])
-			board_config->pins[i].name = dec.string_index[dec.name_index[i] - 1];
+			board_config->pins[i].name = dec.string_index[
+						dec.name_index[i] - 1];
 		if (dec.modalias_index[i])
-			board_config->pins[i].modalias = dec.string_index[dec.modalias_index[i] - 1];
+			board_config->pins[i].modalias = dec.string_index[
+						dec.modalias_index[i] - 1];
 	}
 
 exit_free:
@@ -496,7 +429,6 @@ exit_free:
 	}
 	return board_config;
 }
-//EXPORT_SYMBOL_GPL(creek_decode);
 
 /**
  * pack_uint_opt - Write an optional packed uint value to a bit stream
@@ -505,7 +437,8 @@ exit_free:
  * a one bit is written followed by the valued converted to a packed uint as
  * specified by value_ and scale_ bits.
  */
-static inline void pack_uint_opt(struct bit_creek *dest, uint value, uint value_bits, uint scale_bits, uint def)
+static inline void pack_uint_opt(struct bit_creek *dest, uint value,
+				 uint value_bits, uint scale_bits, uint def)
 {
 	bool is_not_default = (value != def);
 
@@ -531,8 +464,10 @@ static void put_encoded_string(struct bit_creek *dest, const char *str)
 	creek_put_bits(dest, *str | 0x80, 8);
 }
 
-int creek_encode(const struct mcp2210_board_config *src, const struct mcp2210_chip_settings *chip, u8* dest, size_t size) {
-
+int creek_encode(const struct mcp2210_board_config *src,
+		 const struct mcp2210_chip_settings *chip, u8* dest,
+		 size_t size)
+{
 	struct creek_data data;
 	struct bit_creek bs;
 	uint i;
@@ -599,7 +534,8 @@ int creek_encode(const struct mcp2210_board_config *src, const struct mcp2210_ch
 		pack_uint_opt(&bs, spi->max_speed_hz, 10, 2, MCP2210_MAX_SPEED);
 		pack_uint_opt(&bs, spi->min_speed_hz, 10, 2, MCP2210_MIN_SPEED);
 		creek_put_bits(&bs, spi->mode, 8);
-		/* spi->bits_per_word should always be 8 since this chip doesn't support any other value */
+		/* spi->bits_per_word should always be 8 since this chip
+		 * doesn't support any other value */
 		pack_uint_opt(&bs, spi->cs_to_data_delay,	7, 2, 0);
 		pack_uint_opt(&bs, spi->last_byte_to_cs_delay,	7, 2, 0);
 		pack_uint_opt(&bs, spi->delay_between_bytes,	7, 2, 0);
@@ -620,7 +556,6 @@ int creek_encode(const struct mcp2210_board_config *src, const struct mcp2210_ch
 
 	return (bs.pos + 7) / 8;
 }
-//EXPORT_SYMBOL_GPL(creek_encode);
 
 #ifdef __KERNEL__
 struct mcp2210_board_config *mcp2210_creek_probe(struct mcp2210_device *dev,
@@ -631,7 +566,6 @@ struct mcp2210_board_config *mcp2210_creek_probe(struct mcp2210_device *dev,
 			  | MCP2210_EEPROM_READ << 4
 			  | MCP2210_EEPROM_READ << 6;
 	unsigned long irqflags;
-//	int ret = 0;
 	uint i;
 	u8 *eeprom_tmp = NULL;
 	struct mcp2210_chip_settings *pucs = &dev->s.power_up_chip_settings;
@@ -1052,9 +986,6 @@ void dump_board_config(const char *level, unsigned indent, const char *start,
 		buf[1] = '0' + i;
 		dump_pin_config(level, indent + 4, buf, &bc->pins[i]);
 	}
-
-//	dump_chip_settings(level, indent + 2, ".chip = ", &bc->chip);
-
 
 	printk("%s%s}"
 	       "%s.strings_size = %u"

@@ -63,16 +63,20 @@ struct creek_data {
 	u8 name_index[MCP2210_NUM_PINS];
 	u8 modalias_index[MCP2210_NUM_PINS];
 	u8 str_size;
-//	char *strings;
 	const char **string_index;
 	u8 str_count;
 };
 
 uint creek_get_bits(struct bit_creek *bs, uint num_bits);
 int creek_put_bits(struct bit_creek *bs, uint value, uint num_bits);
-int creek_encode(const struct mcp2210_board_config *src, const struct mcp2210_chip_settings *chip, u8* dest, size_t size);
-struct mcp2210_board_config *creek_decode(const struct mcp2210_chip_settings *chip_settings, const u8* src, size_t size, gfp_t gfp_flags);
+int creek_encode(const struct mcp2210_board_config *src,
+		 const struct mcp2210_chip_settings *chip, u8* dest,
+		 size_t size);
+struct mcp2210_board_config *creek_decode(
+		const struct mcp2210_chip_settings *chip_settings,
+		const u8* src, size_t size, gfp_t gfp_flags);
 
+#if 0
 static const uint pow10[] = {
 	1,
 	10,
@@ -85,14 +89,17 @@ static const uint pow10[] = {
 	100000000,
 	1000000000,
 };
+#endif
 
 /**
  * pack_uint - Pack a positive integral value into a smaller space by
  *	       tossing out precision.
  *
  * @value:	The (normal) value
- * @value_bits:	Size (in bits) of the value portion of the result (currently requires a compile-time constant)
- * @scale_bits:	Size (in bits) of the scale portion of the result (currently requires a compile-time constant)
+ * @value_bits:	Size (in bits) of the value portion of the result (currently
+ * 		requires a compile-time constant)
+ * @scale_bits:	Size (in bits) of the scale portion of the result (currently
+ * 		requires a compile-time constant)
  *
  * This mechanism for packing numbers allows for a wide range of values with a
  * limited precision.  A "10:2" packed value has 10 bits of value and 2 bits of
@@ -137,8 +144,10 @@ static inline uint pack_uint(uint value, uint value_bits, uint scale_bits)
  * unpack_uint - Unpack a packed positive integral number.
  *
  * @packed:	The packed value
- * @value_bits:	Size (in bits) of the value portion of packed (currently requires a compile-time constant)
- * @scale_bits:	Size (in bits) of the scale portion of packed (currently requires a compile-time constant)
+ * @value_bits:	Size (in bits) of the value portion of packed (currently
+ * 		requires a compile-time constant)
+ * @scale_bits:	Size (in bits) of the scale portion of packed (currently
+ * 		requires a compile-time constant)
  *
  * @see mcp2210_pack_uint
  *
@@ -165,20 +174,6 @@ static inline uint unpack_uint(uint packed, uint value_bits, uint scale_bits)
 struct mcp2210_board_config *mcp2210_creek_probe(struct mcp2210_device *dev,
 						 gfp_t gfp_flags);
 #endif /* __KERNEL__ */
-
-#if 0
-static inline uint mcp2210_unpack_uint2(uint packed, uint value_bits, uint scale_bits)
-{
-	uint scale = (packed << value_bits) & ((1 << scale_bits) - 1);
-	uint i, mult;
-
-	BUILD_BUG_ON(scale_bits + value_bits <= sizeof(uint) * 8);
-
-	for (i = 0, mult = 1; i != scale; ++i, mult *= 10);
-
-	return (packed & ((1 << value_bits) - 1)) * mult;
-}
-#endif
 
 #ifdef __cplusplus
 }

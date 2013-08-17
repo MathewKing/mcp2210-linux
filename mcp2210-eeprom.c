@@ -39,8 +39,6 @@ const static struct mcp2210_cmd_type mcp2210_cmd_type_eeprom = {
 	.desc = "eeprom",
 };
 
-//mcp2210_cmd_types[MCP2210_CMD_TYPE_EEPROM] = mcp2210_cmd_type_eeprom;
-
 static inline int is_eeprom_range_valid(u8 addr, u16 size)
 {
 	int ret = size && (size + (u16)addr) <= 0x100;
@@ -105,10 +103,8 @@ static int queue_eeprom_cmd(struct mcp2210_device *dev, u8 op, u8 addr,
 //	dump_cmd_eeprom(KERN_WARNING, 0, "eeprom_cmd = ", &cmd->head);
 
 	ret = mcp2210_add_or_free_cmd(&cmd->head);
-	//spin_lock_irqsave(&dev->queue_spinlock, irqflags);
 	if (!dev->cur_cmd)
 		process_commands(dev, GFP_ATOMIC, 0);
-	//spin_unlock_irqrestore(&dev->queue_spinlock, irqflags);
 
 	return ret;
 }

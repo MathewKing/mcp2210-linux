@@ -37,8 +37,6 @@ const struct mcp2210_cmd_type mcp2210_cmd_type_ctl = {
 	.desc = "ctl",
 };
 
-//struct mcp2210_cmd_type mcp2210_cmd_types[MCP2210_CMD_TYPE_CTL] = mcp2210_cmd_type_ctl;
-
 /******************************************************************************
  * Control Command Functions
  */

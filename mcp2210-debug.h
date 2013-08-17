@@ -42,6 +42,8 @@ extern "C" {
 				   "%s: " fmt, __func__, ##__VA_ARGS__);\
 	} while(0)
 
+/* TODO: we need to submit a cleaned up version of this to mainline for
+ * compiler*.h */
 #define warn_on_non_const(value)					\
 	do {								\
 		extern void not_const_warn(void) __compiletime_warning(	\
@@ -52,14 +54,11 @@ extern "C" {
 			not_const_warn();				\
 	} while(0)
 
-/** mcp2210_log
+/**
+ * mcp2210_log - logs messages
  *
- * This macro deserves some explaination.  Generally, printk messages of
- * KERN_ERR level or lower are going to be uncommon and unlikely.  This macro
- * assures that a path of executing leading to invoking printk with KERN_ERR
- * will be marked cold.  All of the other stuff gets compiled-out.
- *
- *
+ * Logs messages but assures that debug messages are completely compiled out
+ * when CONFIG_MCP2210_DEBUG is not enabled
  */
 #define mcp2210_log(level, fmt, ...)					\
 	do {								\
@@ -114,15 +113,15 @@ void dump_spi_device(
 	const char *level, unsigned indent, const char *start,
 	const struct spi_device *spi_dev);
 #else
-# define dump_dev(level, indent, start, dev)			while(0){}
-# define dump_ep(level, indent, start, dev)			while(0){}
+# define dump_dev		_dump_nothing
+# define dump_ep		_dump_nothing
 # define dump_cmd_head		_dump_nothing
 # define dump_cmd_ctl		_dump_nothing
 # define dump_cmd_spi		_dump_nothing
 # define dump_cmd_eeprom	_dump_nothing
-# define dump_spi_message(level, indent, start, dev)		while(0){}
-# define dump_spi_transfer(level, indent, start, dev)		while(0){}
-# define dump_spi_device(level, indent, start, dev)		while(0){}
+# define dump_spi_message	_dump_nothing
+# define dump_spi_transfer	_dump_nothing
+# define dump_spi_device	_dump_nothing
 
 static inline void _dump_nothing(
 	const char *level, unsigned indent, const char *start,
@@ -186,7 +185,6 @@ void dump_usb_key_params(
 void dump_state(
 	const char *level, unsigned indent, const char *start,
 	const struct mcp2210_state *s);
-
 void dump_mcp_msg(
 	const char *level, unsigned indent, const char *start,
 	struct mcp2210_msg *msg, int is_req);
