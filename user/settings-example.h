@@ -26,7 +26,7 @@
 
 static const struct mcp2210_chip_settings my_chip_settings = {
 	.pin_mode = {
-		MCP2210_PIN_GPIO,
+		MCP2210_PIN_SPI,
 		MCP2210_PIN_GPIO,
 		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_DEDICATED,
@@ -34,7 +34,7 @@ static const struct mcp2210_chip_settings my_chip_settings = {
 		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_GPIO,
 		MCP2210_PIN_SPI,
-		MCP2210_PIN_SPI,
+		MCP2210_PIN_GPIO,
 	},
 	.gpio_value		= 3,
 	.gpio_direction		= 3,
@@ -45,7 +45,7 @@ static const struct mcp2210_chip_settings my_chip_settings = {
 
 static const struct mcp2210_chip_settings my_power_up_chip_settings = {
 	.pin_mode = {
-		MCP2210_PIN_GPIO,
+		MCP2210_PIN_SPI,
 		MCP2210_PIN_GPIO,
 		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_DEDICATED,
@@ -53,7 +53,7 @@ static const struct mcp2210_chip_settings my_power_up_chip_settings = {
 		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_GPIO,
 		MCP2210_PIN_SPI,
-		MCP2210_PIN_SPI,
+		MCP2210_PIN_GPIO,
 	},
 	.gpio_value		= 3,
 	.gpio_direction		= 3,
@@ -94,30 +94,6 @@ static const struct mcp2210_usb_key_params my_usb_key_params = {
 static const struct mcp2210_board_config my_board_config = {
 	.pins = {
 		{
-			.mode = MCP2210_PIN_GPIO,
-			.body.gpio.direction = MCP2210_GPIO_OUTPUT,
-			.body.gpio.init_value = 1,
-		}, {
-			.mode = MCP2210_PIN_GPIO,
-			.body.gpio.direction = MCP2210_GPIO_OUTPUT,
-			.body.gpio.init_value = 1,
-		}, {
-			.mode = MCP2210_PIN_DEDICATED,
-			.name = "SSPND"
-		}, {
-			.mode = MCP2210_PIN_DEDICATED,
-			.name = "LED",
-		}, {
-			.mode = MCP2210_PIN_DEDICATED,
-			.name = "LOWPWR",
-		}, {
-			.mode = MCP2210_PIN_DEDICATED,
-			.name = "USBCFG",
-		}, {
-			.mode = MCP2210_PIN_GPIO,
-			.body.gpio.direction = MCP2210_GPIO_INPUT,
-			.name = "MOTION",
-		}, {
 			.mode = MCP2210_PIN_SPI,
 			.body.spi.max_speed_hz = 20000,
 			.body.spi.min_speed_hz = 2000,
@@ -148,17 +124,40 @@ static const struct mcp2210_board_config my_board_config = {
 			/*.desc = "L6470 dSPIN: Fully integrated microstepping "
 				"motor driver with motion engine and SPI" */
 		}, {
+			.mode = MCP2210_PIN_GPIO,
+			.body.gpio.direction = MCP2210_GPIO_OUTPUT,
+			.body.gpio.init_value = 1,
+		}, {
+			.mode = MCP2210_PIN_DEDICATED,
+			.name = "SSPND"
+		}, {
+			.mode = MCP2210_PIN_DEDICATED,
+			.name = "LED",
+		}, {
+			.mode = MCP2210_PIN_DEDICATED,
+			.name = "LOWPWR",
+		}, {
+			.mode = MCP2210_PIN_DEDICATED,
+			.name = "USBCFG",
+		}, {
+			.mode = MCP2210_PIN_GPIO,
+			.body.gpio.direction = MCP2210_GPIO_INPUT,
+			.name = "MOTION",
+		}, {
 			.mode = MCP2210_PIN_SPI,
 			.body.spi.max_speed_hz = 20000,
 			.body.spi.min_speed_hz = 5000,
 			.body.spi.mode = SPI_MODE_3,
 			.body.spi.bits_per_word = 8,
-			.body.spi.cs_to_data_delay = 1,
-			.body.spi.last_byte_to_cs_delay = 1,
+			.body.spi.cs_to_data_delay = 2,
+			.body.spi.last_byte_to_cs_delay = 2,
 			.body.spi.delay_between_bytes = 4,
 			.body.spi.delay_between_xfers = 0,
 			.modalias = "spidev",
 			.name = "ADNS-9800",
+		}, {
+			.mode = MCP2210_PIN_UNUSED,
+			.name = "fried pin",
 		}
 	},
 	.strings_size = 0,
