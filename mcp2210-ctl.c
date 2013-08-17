@@ -197,13 +197,8 @@ static void store_spi_settings(struct mcp2210_device *dev,
 		dev->s.cur_spi_config = pin < MCP2210_NUM_PINS ? pin : -1;
 		dev->s.idle_cs = cfg->idle_cs;
 		dev->s.active_cs = cfg->active_cs;
-#if 0
-		dev->s.spi_delay_per_xfer = 100ul * (cfg->cs_to_data_delay + cfg->last_byte_to_cs_delay);
-		dev->s.spi_delay_per_kb = 100ul * cfg->delay_between_bytes + 1000000ul * 1024ul * 8ul / cfg->bitrate;
-		dev->s.spi_delay_between_xfers = dev->config
-				? dev->config->pins[pin].body.spi.delay_between_xfers
-				: 0;
-#endif
+		dev->s.spi_delay_per_kb = 100ul * cfg->delay_between_bytes
+				+ 1000000ul * 1024ul * 8ul / cfg->bitrate;
 	}
 }
 
