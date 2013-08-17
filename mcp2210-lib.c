@@ -569,11 +569,14 @@ int creek_encode(const struct mcp2210_board_config *src, const struct mcp2210_ch
 
 		switch (pin->mode) {
 		case MCP2210_PIN_GPIO:
+#if 0
+			/* FIXME: what to do with this? */
 			if (pin->body.gpio.direction  != chip->gpio_direction >> (i & 1)
 			 || pin->body.gpio.init_value != chip->gpio_value >> (i & 1)) {
 				printk(KERN_ERR "chip_settings don't match board_config.\n");
 				return -EINVAL;
 			}
+#endif
 			break;
 
 		case MCP2210_PIN_SPI:
