@@ -271,7 +271,7 @@ int get_input_data(void *dest, size_t size) {
 	return ret;
 }
 
-int put_output_data(const void *src, size_t size) {
+int put_output_data(const void *src, size_t size, int append) {
 	const char *file_name = config.fileout;
 	int use_stdout = !file_name || !strcmp(file_name, "-");
 	int fd;
@@ -285,7 +285,7 @@ int put_output_data(const void *src, size_t size) {
 			fprintf(stderr, "Cowardly refusing to write binary data to terminal\n");
 			return -EPERM;
 		}
-	} else if ((fd = open(file_name, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR)) < 0) {
+	} else if ((fd = open(file_name, O_RDWR | O_CREAT | (append ? 0 : O_TRUNC ), S_IRUSR | S_IWUSR)) < 0) {
 		perror("open");
 		return errno;
 	}
@@ -338,42 +338,18 @@ int get_config(int argc, char *argv[]) {
 	if (cfg->state.have_config)
 		dump_board_config("", 0, ".config = ", &cfg->config);
 
-	ret = creek_encode(&cfg->config, &my_chip_settings, buf, sizeof(buf));
+	ret = creek_encode(&cfg->config, &cfg->state.power_up_chip_settings, buf, sizeof(buf));
 	if (ret < 0) {
 		errno = -ret;
 		fatal_error("creek_encode");
 	}
 
-	ret = put_output_data(buf, ret);
+	ret = put_output_data(buf, ret, 0);
 
 exit_free:
 	free(data);
 	return ret;
 }
-
-#if 0
-struct mcp2210_state {
-	u8 have_chip_settings:1;
-	u8 have_power_up_chip_settings:1;
-	u8 have_spi_settings:1;
-	u8 have_power_up_spi_settings:1;
-	u8 have_usb_key_params:1;
-	u8 have_config:1;
-	u8 is_spi_probed:1;
-	u8 is_gpio_probed:1;
-	struct mcp2210_chip_settings chip_settings;
-	struct mcp2210_chip_settings power_up_chip_settings;
-	struct mcp2210_spi_xfer_settings spi_settings;
-	struct mcp2210_spi_xfer_settings power_up_spi_settings;
-	struct mcp2210_usb_key_params usb_key_params;
-	int cur_spi_config;
-	u16 idle_cs;
-	u16 active_cs;
-	unsigned long spi_delay_per_xfer;
-	unsigned long spi_delay_per_kb;
-	unsigned long spi_delay_between_xfers;
-};
-#endif
 
 enum settings_mask {
 	SETTINGS_CHIP_SETTINGS		= 1 << 0,
@@ -527,7 +503,7 @@ static int eeprom_read_write(int is_read, int argc, char *argv[]) {
 
 	if (is_read) {
 //		config.fileout = "b.out";
-		ret = put_output_data(eeprom->data, eeprom->size);
+		ret = put_output_data(eeprom->data, eeprom->size, 0);
 //		ret = put_output_data(data, struct_size);
 	}
 
@@ -771,8 +747,11 @@ static int spidev_send(int argc, char *argv[]) {
 		fatal_error("spi message failed");
 
 	for (i = 0; i < msg->num_xfers; ++i) {
+		const u8 *data = (u8*)(ulong)msg->xfers[i].rx_buf;
+		size_t len = msg->xfers[i].len;
 		fprintf(stderr, "response %d:\n", i);
-		dump_hex(stderr, (u8*)(ulong)msg->xfers[i].rx_buf, msg->xfers[i].len);
+		dump_hex(stderr, data, len);
+		put_output_data(data, len, i);
 	}
 	close(fd);
 	free (msg);
