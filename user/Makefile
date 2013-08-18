@@ -37,7 +37,7 @@ settings.h:
 
 # FIXME: mcp2210 target doesn't need -fPIC in cc on obj files & link
 mcp2210-util: links $(UTIL_OBJ_FILES) $(HEADER_FILES) $(LIB)
-	$(CC) $(CXXFLAGS) $(UTIL_OBJ_FILES) -lmcp2210 -L. -o mcp2210
+	$(CC) $(CXXFLAGS) $(UTIL_OBJ_FILES) -lmcp2210 -L. -o mcp2210-util
 
 .PHONY : clean
 clean:
