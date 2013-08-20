@@ -17,13 +17,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
  */
+#ifdef CONFIG_MCP2210_IOCTL
+
 #include <linux/uaccess.h>
 #include <linux/completion.h>
 
 #include "mcp2210.h"
 #include "mcp2210-debug.h"
-//#include "mcp2210-creek.h"
-
 
 struct ioctl_result {
 	enum mcp2210_ioctl_cmd ioctl_cmd;
@@ -563,5 +563,5 @@ exit_nomem:
 
 	return -ENOMEM;
 }
-
+#endif /* CONFIG_MCP2210_IOCTL */
 

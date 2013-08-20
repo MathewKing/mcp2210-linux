@@ -315,6 +315,7 @@ static inline struct mcp2210_device *mcp2210_kref_to_dev(struct kref *kref)
 	return container_of(kref, struct mcp2210_device, kref);
 }
 
+#ifdef CONFIG_MCP2210_IOCTL
 static int mcp2210_open(struct inode *inode, struct file *file)
 {
 	struct mcp2210_device *dev;
@@ -393,6 +394,7 @@ static struct usb_class_driver mcp2210_class = {
 	.minor_base =	0, /* FIXME: need a minor base from USB maintainer? */
 };
 
+#endif /* CONFIG_MCP2210_IOCTL */
 
 /******************************************************************************
  * USB Driver functions
@@ -701,6 +703,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 
 
 
+#ifdef CONFIG_MCP2210_IOCTL
 	/* TODO: Do I need a "major number" from maintainer?
 	 * https://www.kernel.org/doc/htmldocs/usb/API-usb-register-dev.html
 	 */
@@ -709,6 +712,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		mcp2210_err("failed to register device %de\n", ret);
 		goto error1;
 	}
+#endif /* CONFIG_MCP2210_IOCTL */
 
 	/* TODO: set USB power to max until we know how much we need? */
 	dump_dev(KERN_INFO, 0, "This is the initial device state: ", dev);
@@ -759,9 +763,11 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	return 0;
 
 error2:
+#ifdef CONFIG_MCP2210_IOCTL
 	usb_deregister_dev(intf, &mcp2210_class);
 
 error1:
+#endif
 	usb_set_intfdata(intf, NULL);
 
 error0:
@@ -891,7 +897,9 @@ void mcp2210_disconnect(struct usb_interface *intf)
 
 	/* TODO: free GPIO resources here */
 
+#ifdef CONFIG_MCP2210_IOCTL
 	usb_deregister_dev(intf, &mcp2210_class);
+#endif
 	usb_set_intfdata(intf, NULL);
 	kref_put(&dev->kref, mcp2210_delete);
 

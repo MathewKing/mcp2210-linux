@@ -26,7 +26,7 @@ config MCP2210
 config MCP2210_SPI
 	bool "Enable SPI support"
 	depends on MCP2210 && SPI
-	defalt y
+	default y
 	help
 	  Saying yes here builds support for using the MCP2210 as an SPI
 	  master.  Being that the primary purpose of this device IS to be
@@ -39,16 +39,16 @@ config MCP2210_SPI
 config MCP2210_GPIO
 	bool "Enable GPIO support"
 	depends on MCP2210 && GENERIC_GPIO
-	defalt y
+	default y
 	help
-	  Saying yes here builds support fpr gpio (somehow)
+	  Saying yes here builds support for gpio (somehow)
 
 	  If unsure, say y.
 
 config MCP2210_EEPROM
 	bool "Enable user-EEPROM support"
 	depends on MCP2210
-	defalt y
+	default y
 	help
 	  The MCP2210 has 256 bytes of user-EEPROM.  Enabling this builds
 	  support for reading & writing this memory via ioctls
@@ -96,10 +96,19 @@ config MCP2210_DEBUG_INITIAL
 	  The initial debug level for this driver.  You can change via
 	  /sys/module/mcp2210/parameters/debug.
 
+config MCP2210_IOCTL
+	bool "ioctl support"
+	depends on MCP2210
+	default y
+	help
+	  TODO
+
+	  If unsure, say y.
+
 config MCP2210_CREEK
 	bool "Creek auto-configuration support"
-	depends on MCP2210_SPI && && MCP2210_GPIO && MCP2210_EEPROM
-	defalt y
+	depends on MCP2210_SPI && MCP2210_GPIO && MCP2210_EEPROM
+	default y
 	help
 	  Creek is an auto-configuration scheme that allows you to write
 	  the wiring configuration of your board to the MCP2210's
