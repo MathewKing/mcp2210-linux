@@ -99,46 +99,46 @@ For mask, you OR together the values for the configuration option(s) you want to
 	<td>1</td>
 	<td>chip settings (current)</td>
 	<td>3.2.4</td>
-	<td>[`struct mcp2210_chip_settings`](blob/master/mcp2210.h#L251)</td>
+	<td>[`struct mcp2210_chip_settings`](mcp2210.h#L251)</td>
 </tr><tr>
 	<td>2</td>
 	<td>chip settings (power-up)</td>
 	<td>3.1.1</td>
-	<td>[`struct mcp2210_chip_settings`](blob/master/mcp2210.h#L251)</td>
+	<td>[`struct mcp2210_chip_settings`](mcp2210.h#L251)</td>
 </tr><tr>
 	<td>4</td>
 	<td>spi transfer settings (current)</td>
 	<td>3.2.2</td>
-	<td>[`struct mcp2210_spi_xfer_settings`](blob/master/mcp2210.h#L282)</td>
+	<td>[`struct mcp2210_spi_xfer_settings`](mcp2210.h#L282)</td>
 </tr><tr>
 	<td>8</td>
 	<td>spi transfer settings (power-up)</td>
 	<td>3.1.2</td>
-	<td>[`struct mcp2210_spi_xfer_settings`](blob/master/mcp2210.h#L282)</td>
+	<td>[`struct mcp2210_spi_xfer_settings`](mcp2210.h#L282)</td>
 </tr><tr>
 	<td>16</td>
 	<td>key parameters (power-up)</td>
 	<td>3.1.3</td>
-	<td>[`struct mcp2210_usb_key_params`](blob/master/mcp2210.h#L294)</td>
+	<td>[`struct mcp2210_usb_key_params`](mcp2210.h#L294)</td>
 </tr><tr>
 	<td>31</td>
 	<td>board config</td>
 	<td>n/a</td>
-	<td>[`struct mcp2210_board_config`](blob/master/mcp2210.h#L520)</td>
+	<td>[`struct mcp2210_board_config`](mcp2210.h#L520)</td>
 </tr><tr>
 </table>
 
-"But where the hell do you specify the settings!?" I hear you ask.  Yeah, well currently, you have to modify `user/settings.h`, which is auto-generated from [`user/settings-example.h`](blob/master/user/settings-example.h) the first time you run make and recompile.  (If you don't like this, then please write an xml / json / something interface and send me a patch or pull request!)  This is pretty straight forward, consisting of simple static const structs initialized with named (C99) initializers.
+"But where the hell do you specify the settings!?" I hear you ask.  Yeah, well currently, you have to modify `user/settings.h`, which is auto-generated from [`user/settings-example.h`](user/settings-example.h) the first time you run make and recompile.  (If you don't like this, then please write an xml / json / something interface and send me a patch or pull request!)  This is pretty straight forward, consisting of simple static const structs initialized with named (C99) initializers.
 
 WARNING: Modifying `nvram_access_control` can permanently lock you chip!  Don't change it unless you really mean to do this and understand what you're doing.
 
 Automatic Configuration
 -----------------------
-When the driver probes, it queries the device for (among other things) its power-up chip settings (section 3.1.1) and the power-up spi transfer settings (section 3.1.2). If Creek support is enabled (via `CONFIG_MCP2210_CREEK`), the first four bytes of the user EEPROM area are also read. If these match a "magic number", then the remainder of the user-EEPROM is read and decoded into a [`struct mcp2210_board_config`](blob/master/mcp2210.h#L520) object which contains all of the information (timings for each SPI device, name of the spi protocol driver, label, etc.) to allow probing the spi_master.
+When the driver probes, it queries the device for (among other things) its power-up chip settings (section 3.1.1) and the power-up spi transfer settings (section 3.1.2). If Creek support is enabled (via `CONFIG_MCP2210_CREEK`), the first four bytes of the user EEPROM area are also read. If these match a "magic number", then the remainder of the user-EEPROM is read and decoded into a [`struct mcp2210_board_config`](mcp2210.h#L520) object which contains all of the information (timings for each SPI device, name of the spi protocol driver, label, etc.) to allow probing the spi_master.
 
 Storing Auto-Configure Data
 ---------------------------
-All support for creating this encoding from your [`struct mcp2210_board_config`](blob/master/mcp2210.h#L520) in `user/settings.h` is in the userspace utility program.  Currently, it can be generated as follows:
+All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L520) in `user/settings.h` is in the userspace utility program.  Currently, it can be generated as follows:
 
 1. Edit `user/settings.h` to your needs and recomple `mcp2210-util`
 2. Run the following command to manally configure (volatile memory) the mcp2210, (as in the Configuring from Userland section)
