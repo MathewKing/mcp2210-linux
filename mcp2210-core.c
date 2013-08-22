@@ -285,7 +285,7 @@ static int __init mcp2210_init(void)
 
 	ret = usb_register_driver(&mcp2210_driver, THIS_MODULE, "mcp2210");
 	if (ret)
-	printk(KERN_ERR "can't register mcp2210 driver\n");
+		printk(KERN_ERR "can't register mcp2210 driver\n");
 
 	return ret;
 }

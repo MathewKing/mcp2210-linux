@@ -20,9 +20,20 @@
  */
 
 #include <linux/spi/spi.h>
+#include <linux/version.h>
 
 #include "mcp2210.h"
 #include "mcp2210-debug.h"
+
+/* The non-queued mechanism will supposedly be phased out in the future.
+ * However, we don't get any benefit from the new API since we just queue
+ * a command (in our own queue) when we get a new message anyway. Thus, when/if
+ * the old SPI transfer() mechanism is phased out, we can modify the below
+ * KERNEL_VERSION() check.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,99,0)
+# define USE_SPI_QUEUE 1
+#endif
 
 static int spi_submit_prepare(struct mcp2210_cmd *cmd_head);
 static int spi_complete_urb(struct mcp2210_cmd *cmd_head);
@@ -48,16 +59,20 @@ static inline struct mcp2210_device *mcp2210_spi_master2dev(struct spi_master *m
 	return *((struct mcp2210_device **)spi_master_get_devdata(master));
 }
 
-
 /******************************************************************************
  * SPI Master funtions
  */
 
 static void mcp2210_spi_cleanup(struct spi_device *spi);
 static int mcp2210_spi_setup(struct spi_device *spi);
+#ifndef USE_SPI_QUEUE
+static int transfer(struct spi_device *spi, struct spi_message *msg);
+#else
 static int prepare_transfer_hardware(struct spi_master *master);
 static int transfer_one_message(struct spi_master *master, struct spi_message *msg);
 static int unprepare_transfer_hardware(struct spi_master *master);
+#endif /* USE_SPI_QUEUE */
+
 /**
  * mcp2210_spi_probe -
  * @dev:
@@ -87,16 +102,24 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	//master->max_speed_hz = MCP2210_MAX_SPEED;
 	master->bus_num = -1;
 	master->num_chipselect = MCP2210_NUM_PINS;
+	/* unused: master->dma_alignment */
 	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_LSB_FIRST | SPI_3WIRE;
 	/* TODO: what's bits_per_word_mask for? */
 	master->flags = 0;
+	/* unused: master->bus_lock_spinlock
+	 * unused: master->bus_lock_mutex
+	 * unused: master->bus_lock_flag
+	 */
 	master->setup = mcp2210_spi_setup;
-	master->transfer = NULL;
 	master->cleanup = mcp2210_spi_cleanup;
+#ifndef USE_SPI_QUEUE
+	master->transfer = transfer;
+#else
+	master->transfer = NULL;
 	master->prepare_transfer_hardware = prepare_transfer_hardware;
 	master->transfer_one_message = transfer_one_message;
 	master->unprepare_transfer_hardware = unprepare_transfer_hardware;
-
+#endif
 
 	ret = spi_register_master(master);
 
@@ -121,13 +144,15 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 			goto error1;
 		}
 
-		chip->max_speed_hz = cfg->body.spi.max_speed_hz;
-		chip->chip_select = i;
-		chip->mode = cfg->body.spi.mode;
+		chip->max_speed_hz  = cfg->body.spi.max_speed_hz;
+		chip->chip_select   = i;
+		chip->mode	    = cfg->body.spi.mode;
 		chip->bits_per_word = cfg->body.spi.bits_per_word;
-		//chip->irq =
-		//chip->controller_state
-		//chip->controller_data
+		/* unused: chip->cs_gpio
+		 * unused: chip->irq
+		 * unused: chip->controller_state
+		 * unused: chip->controller_data
+		 */
 		modalias = cfg->modalias ? cfg->modalias : "spidev";
 
 		WARN_ON(strlen(modalias) >= sizeof(chip->modalias));
@@ -261,20 +286,9 @@ static int mcp2210_spi_setup(struct spi_device *spi)
 	return ret;
 }
 
-static int prepare_transfer_hardware(struct spi_master *master)
+static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
+		     gfp_t gfp_flags)
 {
-	struct mcp2210_device *dev = mcp2210_spi_master2dev(master);
-	mcp2210_info();
-
-	/* TODO: check if in low power mode and issue a wake up */
-
-	return 0;
-}
-
-/* may sleep */
-static int transfer_one_message(struct spi_master *master, struct spi_message *msg)
-{
-	struct mcp2210_device *dev = mcp2210_spi_master2dev(master);
 	u8 pin = msg->spi->chip_select;
 	struct mcp2210_cmd_spi_msg *cmd;
 	struct list_head *pos;
@@ -329,7 +343,7 @@ static int transfer_one_message(struct spi_master *master, struct spi_message *m
 	}
 
 	cmd = mcp2210_alloc_cmd_type(dev, struct mcp2210_cmd_spi_msg,
-				     &mcp2210_cmd_type_spi, GFP_KERNEL);
+				     &mcp2210_cmd_type_spi, gfp_flags);
 
 	if (!cmd)
 		return -ENOMEM;
@@ -352,7 +366,31 @@ static int transfer_one_message(struct spi_master *master, struct spi_message *m
 	if (ret)
 		return ret;
 
-	return process_commands(dev, GFP_KERNEL, 0);
+	return process_commands(dev, gfp_flags, 0);
+}
+
+#ifndef USE_SPI_QUEUE
+/* will not sleep */
+static int transfer(struct spi_device *spi, struct spi_message *msg)
+{
+	return queue_msg(mcp2210_spi2dev(spi), msg, GFP_ATOMIC);
+}
+
+#else
+
+static int prepare_transfer_hardware(struct spi_master *master)
+{
+	struct mcp2210_device *dev = mcp2210_spi_master2dev(master);
+	mcp2210_info();
+
+	return 0;
+}
+
+/* may sleep */
+static int transfer_one_message(struct spi_master *master,
+				struct spi_message *msg)
+{
+	return queue_msg(mcp2210_spi_master2dev(master), msg, GFP_KERNEL);
 }
 
 static int unprepare_transfer_hardware(struct spi_master *master)
@@ -360,10 +398,9 @@ static int unprepare_transfer_hardware(struct spi_master *master)
 	struct mcp2210_device *dev = mcp2210_spi_master2dev(master);
 	mcp2210_info();
 
-	/* TODO: set timer for manger thread to do low power mode? */
-
 	return 0;
 }
+#endif /* USE_SPI_QUEUE */
 
 /******************************************************************************
  * SPI Message command functions
@@ -619,9 +656,16 @@ static int spi_mcp_error(struct mcp2210_cmd *cmd_head)
 static int spi_complete_cmd(struct mcp2210_cmd *cmd_head, void *context)
 {
 	struct mcp2210_cmd_spi_msg *cmd = (void*)cmd_head;
+	struct spi_message *msg = cmd->msg;
 
-	cmd->msg->status = cmd->head.status;
+	msg->status = cmd->head.status;
+
+#ifndef USE_SPI_QUEUE
+	if (msg->complete)
+		msg->complete(msg->context);
+#else
 	spi_finalize_current_message(cmd->head.dev->spi_master);
+#endif
 	return 0;
 }
 
