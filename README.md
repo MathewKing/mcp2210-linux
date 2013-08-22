@@ -136,12 +136,14 @@ Automatic Configuration
 -----------------------
 When the driver probes, it queries the device for (among other things) its power-up chip settings (section 3.1.1) and the power-up spi transfer settings (section 3.1.2). If Creek support is enabled (via `CONFIG_MCP2210_CREEK`), the first four bytes of the user EEPROM area are also read. If these match a "magic number", then the remainder of the user-EEPROM is read and decoded into a [`struct mcp2210_board_config`](mcp2210.h#L520) object which contains all of the information (timings for each SPI device, name of the spi protocol driver, label, etc.) to allow probing the spi_master.
 
+For details on the encoding format, see the comments in [`mcp2210-creek.h`](mcp2210-creek#L29.h) (see also [`creek_encode`](mcp2210-lib.c#L467) and [`creek_decode`](mcp2210-lib.c#L277))
+
 Storing Auto-Configure Data
 ---------------------------
-All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L520) in `user/settings.h` is in the userspace utility program.  Currently, it can be generated as follows:
+All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L520) in `user/settings.h` is in the userspace utility program.  The current mechanism is klunky, but works as follows:
 
 1. Edit `user/settings.h` to your needs and recomple `mcp2210-util`
-2. Run the following command to manally configure (volatile memory) the mcp2210, (as in the Configuring from Userland section)
+2. Run the following command to manally configure (in volatile memory) the mcp2210, (as in the Configuring from Userland section)
 ```
 mcp2210-util set config 63
 ```

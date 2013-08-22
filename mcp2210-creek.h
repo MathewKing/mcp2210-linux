@@ -26,11 +26,33 @@
  *
  * Creek -- because if it doesn't work, you're up one.
  *
- * Format of a "Creek" configuration
+ * Format of a Creek configuration
  * 00:0 - 03:7   (32 bits) magic
  * 04:0 - 04:3   (4 bits)  version
  * 04:4 - 06:5   (18 bits) 9x pairs of two bits: 1 = has_name, 2 = has_modalias
- * 06:6 - varies
+ * 06:6 - varies 9x SPI Data
+ *               strings
+ *
+ * SPI data is encoded in a manner where each field is compared to a common or
+ * standard value. If it matches that value, then a single 0 bit is written
+ * and nothing else.  If it doesn't match, then a single 1 bit is written
+ * followed by the value as a floating point unsigned interger. The exception
+ * is mode, which is always 8 bits.
+ *
+ * SPI Data
+ * Field                 Default Value     Precision  Magnitude
+ * ------------------------------------------------------------
+ * max_speed_hz          MCP2210_MAX_SPEED 10         2
+ * min_speed_hz          MCP2210_MIN_SPEED 10         2
+ * mode                --always 8 bits--
+ * cs_to_data_delay      0                 7          2
+ * last_byte_to_cs_delay 0                 7          2
+ * delay_between_bytes   0                 7          2
+ * delay_between_xfers   0                 7          2
+ *
+ * Strings are encoded as 7 bit ASCII with bit 7 terminatng the string.  (We
+ * could get better compression by writing string sizes first and then limiting
+ * them to 6 bits, but we seem to have plenty of room so far.)
  *
  */
 
