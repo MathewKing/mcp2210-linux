@@ -247,58 +247,6 @@ enum mcp2210_endpoints {
  * the native endianess in ctl_complete_urb().
  */
 
-#pragma pack(1)
-struct mcp2210_chip_settings {
-	u8 pin_mode[MCP2210_NUM_PINS];
-	u16 gpio_value;
-	u16 gpio_direction;
-	u8 other_settings;
-	u8 nvram_access_control;
-	u8 password[8];
-	/* u8 reserved[37]; */
-};
-
-/**
- * struct mcp2210_spi_xfer_settings
- * @bitrate:		   Bits per second.  A valid value is between 1500
- * 			   (0x5dc) and 12,000,000 (0xb71b00).
- * @idle_cs:		   The idle chip select values for pins 0-8:
- * 			   x x x x x x x 8  7 6 5 4 3 2 1 0
- * @active_cs:		   The active chip select values for pins 0-8:
- * 			   x x x x x x x 8  7 6 5 4 3 2 1 0
- * @delay_cs_to_data:	   Delay between CS assertion and first data byte in
- * 			   multiples of 100 uS (from zero to 6.5536 seconds).
- * @delay_last_byte_to_cs: Delay between last byte and CS de-assertion in
- * 			   multiples of 100 uS.
- * @delay_between_bytes:   Delay between data bytes in multiples of 100 uS.
- * @bytes_per_trans:	   Number of bytes to transfer per-transaction.
- * @mode:		   SPI Mode 0-3.
- *
- * When representing the values for SPI communications (either sending or
- * receiving the SPI transfer settings), the idle_cs and active_cs are as
- * advertised -- what the values of each pin should be when innactive and
- * active.
- */
-struct mcp2210_spi_xfer_settings {
-	u32 bitrate;
-	u16 idle_cs;
-	u16 active_cs;
-	u16 cs_to_data_delay;
-	u16 last_byte_to_cs_delay;
-	u16 delay_between_bytes;
-	u16 bytes_per_trans;
-	u8 mode;
-	/* u8 reserved[43]; */
-};
-
-struct mcp2210_usb_key_params {
-	u16 vid;
-	u16 pid;
-	u8 chip_power_option;
-	u8 requested_power;
-	/* u8 reserved[54]; */
-};
-
 /**
  * mcp2210_msg - A USB message sent to or received from an MCP2210
  *
@@ -321,7 +269,7 @@ struct mcp2210_usb_key_params {
  * @see http://ww1.microchip.com/downloads/en/DeviceDoc/22288A.pdf
  *
  */
-
+#pragma pack(1)
 struct mcp2210_msg {
 	u8 cmd;
 
@@ -395,10 +343,59 @@ struct mcp2210_msg {
 	} head;
 
 	union {
-		struct mcp2210_chip_settings chip;
+		struct mcp2210_chip_settings {
+			u8 pin_mode[MCP2210_NUM_PINS];
+			u16 gpio_value;
+			u16 gpio_direction;
+			u8 other_settings;
+			u8 nvram_access_control;
+			u8 password[8];
+			/* u8 reserved[37]; */
+		} chip;
+
 		u16 gpio;
-		struct mcp2210_spi_xfer_settings spi;
-		struct mcp2210_usb_key_params set_usb_params;
+
+/**
+ * struct mcp2210_spi_xfer_settings
+ * @bitrate:		   Bits per second.  A valid value is between 1500
+ * 			   (0x5dc) and 12,000,000 (0xb71b00).
+ * @idle_cs:		   The idle chip select values for pins 0-8:
+ * 			   x x x x x x x 8  7 6 5 4 3 2 1 0
+ * @active_cs:		   The active chip select values for pins 0-8:
+ * 			   x x x x x x x 8  7 6 5 4 3 2 1 0
+ * @delay_cs_to_data:	   Delay between CS assertion and first data byte in
+ * 			   multiples of 100 uS (from zero to 6.5536 seconds).
+ * @delay_last_byte_to_cs: Delay between last byte and CS de-assertion in
+ * 			   multiples of 100 uS.
+ * @delay_between_bytes:   Delay between data bytes in multiples of 100 uS.
+ * @bytes_per_trans:	   Number of bytes to transfer per-transaction.
+ * @mode:		   SPI Mode 0-3.
+ *
+ * When representing the values for SPI communications (either sending or
+ * receiving the SPI transfer settings), the idle_cs and active_cs are as
+ * advertised -- what the values of each pin should be when innactive and
+ * active.
+ */
+		struct mcp2210_spi_xfer_settings {
+			u32 bitrate;
+			u16 idle_cs;
+			u16 active_cs;
+			u16 cs_to_data_delay;
+			u16 last_byte_to_cs_delay;
+			u16 delay_between_bytes;
+			u16 bytes_per_trans;
+			u8 mode;
+			/* u8 reserved[43]; */
+		} spi;
+
+		struct mcp2210_usb_key_params {
+			u16 vid;
+			u16 pid;
+			u8 chip_power_option;
+			u8 requested_power;
+			/* u8 reserved[54]; */
+		} set_usb_params;
+
 		u8 password[8];
 		u16 interrupt_event_counter;
 		u8 raw[60];
@@ -429,74 +426,13 @@ struct mcp2210_msg {
 };
 #pragma pack()
 
-
-/**
- * @gpio_dir	GPIO: The default goip direction
- * @gpio_out	GPIO: The default value for gpio output
- */
-struct mcp2210_pin_config_gpio {
-	u8 direction;
-	u8 init_value;
-};
-
-/**
- * @max_speed_hz:	SPI: Max bits per second (must be 1500-12000000)
- * @max_speed_hz:	SPI: Max bits per second (must be 1500-12000000)
- * @mode: 		the struct spi_device mode
- * @bits_per_word:	better be 8
- * @cs_to_data_delay	SPI: Chip select to data start delay as a quanta of 100 us (i.e., in hundreds of microseconds)
- * @last_byte_to_cs_delay SPI: Delay bewteen last byte of data and CS de-activation
- * @delay_between_bytes	SPI: Delay bewteen data bytes
- * @delay_between_xfers Delay between transfers in microseconds
- */
-#if 0
-#define	SPI_CPHA	0x01			/* clock phase */
-#define	SPI_CPOL	0x02			/* clock polarity */
-#define	SPI_MODE_0	(0|0)			/* (original MicroWire) */
-#define	SPI_MODE_1	(0|SPI_CPHA)
-#define	SPI_MODE_2	(SPI_CPOL|0)
-#define	SPI_MODE_3	(SPI_CPOL|SPI_CPHA)
-#define	SPI_CS_HIGH	0x04			/* chipselect active high? */
-#define	SPI_LSB_FIRST	0x08			/* per-word bits-on-wire */
-#define	SPI_3WIRE	0x10			/* SI/SO signals shared */
-#define	SPI_LOOP	0x20			/* loopback mode */
-#define	SPI_NO_CS	0x40			/* 1 dev/bus, no chipselect */
-#define	SPI_READY	0x80			/* slave pulls low to pause */
-#endif
-struct mcp2210_pin_config_spi {
-	u32 max_speed_hz;
-	u32 min_speed_hz;
-	u8 mode;
-	/* This is pretty, but not incorrect according to the C standard :(
-	 * Do we want to do it anyway and let it be dependent upon gcc
-	 * behavior?
-	union {
-		u8 raw;
-		struct {
-			u8 mode:2;
-			u8 cs_high:1;
-			u8 lsb_first:1;
-			u8 three_wire:1;
-			u8 loop:1;
-			u8 no_cs:1;
-			u8 ready:1;
-		} bits;
-	} mode;
-	*/
-
-	u8 bits_per_word;
-	u16 cs_to_data_delay;
-	u16 last_byte_to_cs_delay;
-	u16 delay_between_bytes;
-	u16 delay_between_xfers;
-};
-
 /**
  * mcp2210_pin_config - Configuration for a single multi-purpose pin output
  *
- * @mode		How this pin will be used.  Should be one of enum mcp2210_pin_mode
- * @device_pn		SPI: The part number of the device connected to this PIN.
- * @device_name		SPI: A more descriptive name of the device
+ * @mode:	 How this pin will be used.  Should be one of
+ * 		 enum mcp2210_pin_mode
+ * @device_pn:	 SPI: The part number of the device connected to this PIN.
+ * @device_name: SPI: A more descriptive name of the device
  *
  * The MCP2210 has 9 pins that can be used for either General Purpose I/O
  * (GPIO), SPI Chip Select (CS) or some dedicated function specific to the pin.
@@ -507,11 +443,30 @@ struct mcp2210_pin_config_spi {
 struct mcp2210_pin_config {
 	u8 mode:2;
 	u8 unused:6;
-	union {
-		struct mcp2210_pin_config_gpio gpio;
-		struct mcp2210_pin_config_spi spi;
 
-	} body;
+/**
+ * @max_speed_hz:	SPI: Max bits per second (must be 1500-12000000)
+ * @max_speed_hz:	SPI: Max bits per second (must be 1500-12000000)
+ * @mode: 		the struct spi_device mode
+ * @bits_per_word:	better be 8
+ * @cs_to_data_delay	SPI: Chip select to data start delay as a quanta of
+ * 			100 us (i.e., in hundreds of microseconds)
+ * @last_byte_to_cs_delay SPI: Delay bewteen last byte of data and CS
+ * 			de-activation
+ * @delay_between_bytes	SPI: Delay bewteen data bytes
+ * @delay_between_xfers Delay between transfers in microseconds
+ */
+	struct mcp2210_pin_config_spi {
+		u32 max_speed_hz;
+		u32 min_speed_hz;
+		u8 mode;
+		u8 bits_per_word;
+		u16 cs_to_data_delay;
+		u16 last_byte_to_cs_delay;
+		u16 delay_between_bytes;
+		u16 delay_between_xfers;
+	} spi;
+
 	const char *name;
 	const char *modalias;
 	/*const char *desc; */
@@ -559,15 +514,10 @@ struct mcp2210_cmd_type {
 	int (*submit_prepare)(struct mcp2210_cmd *cmd_head);
 	int (*complete_urb)(struct mcp2210_cmd *cmd_head);
 	int (*mcp_error)(struct mcp2210_cmd *cmd_head);
-/*	void (*complete_cmd)(struct mcp2210_cmd *cmd_head);*/
 	void (*dump)(const char *level, unsigned indent, const char *start,
 		     const struct mcp2210_cmd *cmd_head);
 	const char *desc;
-};// mcp2210_cmd_types[MCP2210_CMD_TYPE_MAX];
-
-//extern const struct mcp2210_cmd_type mcp2210_cmd_type_ctrl;
-//extern const struct mcp2210_cmd_type mcp2210_cmd_type_eeprom;
-//extern const struct mcp2210_cmd_type mcp2210_cmd_type_spi;
+};
 
 typedef int (*mcp2210_complete_t)(struct mcp2210_cmd *cmd, void *context);
 
@@ -577,21 +527,23 @@ typedef int (*mcp2210_complete_t)(struct mcp2210_cmd *cmd, void *context);
  * @type:		The type of command or NULL if this is a general-
  * 			purpose (non-USB transaction) command that will execute
  * 			when it complete() is called.
- * @node:
- * @spinlock:
- * @time_queued:	time (in jiffies) comand was queued
- * @time_started:	time (in jiffies) comand processing began
- * @delay_until:
- * @status:
- * @mcp_status:
- * @state:
- * @kill:
- * @can_retry:		True if this command has no side-effects (like querying the chip's settings) and can be retried if the USB transaction fails due to IO errors or shitty drivers.
- * @nonatomic:		True if this command must be executed in a non-atomic context.
- * @repeat_count:
- * @complete:
- * @context:
- * @data:
+ * @time_queued:	Time (in jiffies) comand was queued
+ * @time_started:	Time (in jiffies) comand processing began
+ * @delay_until:	Time (in jiffies) this command should be executed
+ * 			(ignored unless delayed is set)
+ * @status:		Status code (zero or a negative error)
+ * @mcp_status:		The MCP status code (initially zero)
+ * @state:		State of the command (enum mcp2210_urb_cmd_state)
+ * @kill:		True if this command is being killed
+ * @can_retry:		True if this command has no side-effects (like querying
+ * 			the chip's settings) and can be retried if the USB
+ * 			transaction fails due to IO errors or shitty drivers.
+ * @delayed:		True if this delay_until should be respected.
+ * @nonatomic:		True if this command must be executed in a non-atomic
+ * 			context.
+ * @repeat_count:	Number of times this command has been repeated.
+ * @complete:		A complete function
+ * @context:		The complete function's context
  *
  */
 struct mcp2210_cmd {

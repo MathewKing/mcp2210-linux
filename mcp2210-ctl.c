@@ -417,7 +417,7 @@ static void calculate_active_cs(const struct mcp2210_device *dev,
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		pin_cfg = &dev->config->pins[i];
 		if (pin_cfg->mode == MCP2210_PIN_SPI) {
-			u16 cs = !(pin_cfg->body.spi.mode & SPI_CS_HIGH);
+			u16 cs = !(pin_cfg->spi.mode & SPI_CS_HIGH);
 
 			*idle_cs |= cs << i;
 			if (pin == i) {
@@ -467,7 +467,7 @@ void calculate_spi_settings(struct mcp2210_spi_xfer_settings *dest,
 		dest->delay_between_bytes	= cur->delay_between_bytes;
 	} else {
 		const struct mcp2210_pin_config_spi *cfg = &dev->config
-							  ->pins[pin].body.spi;
+							  ->pins[pin].spi;
 		dest->cs_to_data_delay		= cfg->cs_to_data_delay;
 		dest->last_byte_to_cs_delay	= cfg->last_byte_to_cs_delay;
 		dest->delay_between_bytes	= cfg->delay_between_bytes;

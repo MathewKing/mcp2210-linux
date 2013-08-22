@@ -144,10 +144,10 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 			goto error1;
 		}
 
-		chip->max_speed_hz  = cfg->body.spi.max_speed_hz;
+		chip->max_speed_hz  = cfg->spi.max_speed_hz;
 		chip->chip_select   = i;
-		chip->mode	    = cfg->body.spi.mode;
-		chip->bits_per_word = cfg->body.spi.bits_per_word;
+		chip->mode	    = cfg->spi.mode;
+		chip->bits_per_word = cfg->spi.bits_per_word;
 		/* unused: chip->cs_gpio
 		 * unused: chip->irq
 		 * unused: chip->controller_state
@@ -167,12 +167,6 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 		dev->chips[i] = chip;
 	}
 
-	//demo_spi_devices[0].bus_num = master->bus_num;
-	//printk("mcp2210 spi master registered bus number %d\n", demo_spi_devices[0].bus_num);
-
-	//spi_new_device(master, demo_spi_devices);
-
-	//spi_master_put(master);
 	dev->spi_master = master;
 	return 0;
 
@@ -191,7 +185,7 @@ void mcp2210_spi_remove(struct mcp2210_device *dev)
 	mcp2210_debug("mcp2210_spi_remove\n");
 
 	if (!dev || !dev->spi_master)
-		return;// -EINVAL;
+		return;
 
 	spi_unregister_master(dev->spi_master);
 
@@ -226,9 +220,6 @@ static int validate_speed(struct mcp2210_device *dev, u32 bitrate)
  * is_spi_in_flight - determine if a non-failed SPI message is in progress on
  * 		      the specified pin
  *
- * @dev:
- * @pin:
- *
  * This will not return true if an SPI transfer is "in progress" or may be in
  * progress on the chip due to some communication failure, but only if a real,
  * live non-failed transfer is in progress.
@@ -257,7 +248,8 @@ static int mcp2210_spi_setup(struct spi_device *spi)
 		     dev->spi_in_flight, dev->s.cur_spi_config);
 
 	if (dump_commands)
-		dump_spi_device(KERN_INFO, 0, "mcp2210_spi_setup: spi_device = ", spi);
+		dump_spi_device(KERN_INFO, 0, "mcp2210_spi_setup: "
+				"spi_device = ", spi);
 
 	if (validate_speed(dev, spi->max_speed_hz))
 		return -EINVAL;
@@ -448,17 +440,22 @@ submit_ctl_cmd:
 			return cc->type->submit_prepare(cc);
 		}
 
-		/* the chip may be in the middle of a failed SPI transfer, so we have to kill that */
-		if (dev->spi_in_flight) {
-			mcp2210_warn("***** old SPI message still in-flight, killing...");
-			ctl_cmd_init(dev, &dev->ctl_cmd, MCP2210_CMD_SPI_CANCEL, 0, NULL, 0, false);
+		/* the chip may be in the middle of a failed SPI transfer, so
+		 * we have to kill that */
+		if (unlikely(dev->spi_in_flight)) {
+			mcp2210_warn("***** old SPI message still in-flight, "
+				     "killing...");
+			ctl_cmd_init(dev, &dev->ctl_cmd, MCP2210_CMD_SPI_CANCEL,
+				     0, NULL, 0, false);
 			cmd->ctl_cmd = &dev->ctl_cmd;
 			goto submit_ctl_cmd;
 		}
 
 		need_spi_settings = 1;
-		mcp2210_debug("dev->s.cur_spi_config = %d", dev->s.cur_spi_config);
-		dump_spi_xfer_settings(KERN_DEBUG, 0, "dev->s.spi_settings = ", &dev->s.spi_settings);
+		mcp2210_debug("dev->s.cur_spi_config = %d",
+			      dev->s.cur_spi_config);
+		dump_spi_xfer_settings(KERN_DEBUG, 0, "dev->s.spi_settings = ",
+				       &dev->s.spi_settings);
 		calculate_spi_settings(&needed, dev, cmd->spi, cmd->xfer, pin);
 
 
@@ -466,14 +463,17 @@ submit_ctl_cmd:
 		 * then let's see if there's any difference in the SPI
 		 * settings */
 		if (pin == dev->s.cur_spi_config) {
-
 			/* if nothing changed, then then do the SPI xfer */
 			if (!compare_spi_settings(&needed, &dev->s.spi_settings))
 				need_spi_settings = 0;
-			else {
-				mcp2210_debug("SPI transfer settings didn't match");
-				dump_spi_xfer_settings(KERN_DEBUG, 0, "needed = ", &needed);
-				dump_spi_xfer_settings(KERN_DEBUG, 0, "dev->spi_settings = ", &dev->s.spi_settings);
+			else if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
+				mcp2210_debug("SPI transfer settings didn't "
+					      "match");
+				dump_spi_xfer_settings(KERN_DEBUG, 0,
+						       "needed = ", &needed);
+				dump_spi_xfer_settings(KERN_DEBUG, 0,
+						       "dev->spi_settings = ",
+						       &dev->s.spi_settings);
 			}
 		}
 
@@ -481,7 +481,9 @@ submit_ctl_cmd:
 		if (need_spi_settings) {
 			cmd->ctl_cmd = &dev->ctl_cmd;
 			mcp2210_info("Settings SPI Transfer Settings");
-			ctl_cmd_init(dev, cmd->ctl_cmd, MCP2210_CMD_SET_SPI_CONFIG, 0, &needed, sizeof(needed), false);
+			ctl_cmd_init(dev, cmd->ctl_cmd,
+				     MCP2210_CMD_SET_SPI_CONFIG, 0, &needed,
+				     sizeof(needed), false);
 			cmd->ctl_cmd->pin = pin;
 			goto submit_ctl_cmd;
 		}
@@ -507,12 +509,10 @@ submit_ctl_cmd:
 		cmd->tx_bytes_in_process = len;
 
 		mcp2210_debug("sending %u bytes", len);
-		//print_mcp_msg(cmd->head.dev, KERN_DEBUG, "", dev->eps[EP_IN].buffer);
 	} else {
 		mcp2210_init_msg(req, MCP2210_CMD_SPI_TRANSFER, 0,
 				 0, NULL, 0, true);
 		mcp2210_debug("sending empty SPI message");
-		//print_mcp_msg(cmd->head.dev, KERN_DEBUG, "", dev->eps[EP_IN].buffer);
 	}
 
 	dev->spi_in_flight = 1;
@@ -529,7 +529,6 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 	struct mcp2210_device *dev;
 	struct mcp2210_msg *rep;
 	const struct mcp2210_pin_config_spi *cfg;
-//	unsigned long cur_time = jiffies;
 	unsigned bytes_pending;
 	long expected_time_usec = 0;
 	u8 pin;
@@ -556,8 +555,10 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 
 			/* get the dump function to print the response */
 			cc->state = MCP2210_STATE_COMPLETE;
-			mcp2210_debug("dev->s.cur_spi_config = %d", dev->s.cur_spi_config);
-			dump_spi_xfer_settings(KERN_INFO, 0, "spi settings now: ", &dev->s.spi_settings);
+			mcp2210_debug("dev->s.cur_spi_config = %d",
+				      dev->s.cur_spi_config);
+			dump_spi_xfer_settings(KERN_INFO, 0, "spi settings "
+					       "now: ", &dev->s.spi_settings);
 		}
 
 		if (ret)
@@ -570,7 +571,7 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 
 	rep = dev->eps[EP_IN].buffer;
 	len = rep->head.rep.spi.size;
-	cfg = &dev->config->pins[pin].body.spi;
+	cfg = &dev->config->pins[pin].spi;
 
 
 	/* by "in process", we mean really sent to the MCP2210 */
@@ -584,7 +585,8 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 	if (len) {
 		/* There is data to receive */
 		if(cmd->xfer->rx_buf)
-			memcpy(cmd->xfer->rx_buf + cmd->rx_pos, rep->body.raw, len);
+			memcpy(cmd->xfer->rx_buf + cmd->rx_pos, rep->body.raw,
+			       len);
 
 		cmd->rx_pos += len;
 		cmd->msg->actual_length += len;

@@ -276,6 +276,7 @@ int put_output_data(const void *src, size_t size, int append) {
 	int use_stdout = !file_name || !strcmp(file_name, "-");
 	int fd;
 	ssize_t ret;
+	int flags = O_RDWR | O_CREAT | (append ? O_APPEND : O_TRUNC );
 
 	fprintf(stderr, "put_output_data src: %p, size: %lu\n", src, (unsigned long) size);
 
@@ -285,7 +286,7 @@ int put_output_data(const void *src, size_t size, int append) {
 			fprintf(stderr, "Cowardly refusing to write binary data to terminal\n");
 			return -EPERM;
 		}
-	} else if ((fd = open(file_name, O_RDWR | O_CREAT | (append ? 0 : O_TRUNC ), S_IRUSR | S_IWUSR)) < 0) {
+	} else if ((fd = open(file_name, flags, S_IRUSR | S_IWUSR)) < 0) {
 		perror("open");
 		return errno;
 	}
@@ -716,7 +717,7 @@ static __always_inline void _spidev_set(int fd, unsigned long request, void *val
 static int spidev_send(int argc, char *argv[]) {
 	int ret = 0;
 	int fd;
-	unsigned i;// = _IOR(1,2,u8);
+	unsigned i;
 	struct spi_msg *msg;
 
 	msg = parse_msgs(argc, argv);
@@ -739,9 +740,7 @@ static int spidev_send(int argc, char *argv[]) {
 
 	spidev_set(fd, SPI_IOC_RD_MODE, &config.spi.mode, "spi mode");
 	spidev_set(fd, SPI_IOC_RD_MAX_SPEED_HZ, &config.spi.speed_hz, "spi max speed");
-	//spidev_set(fd, SPI_IOC_RD_MODE, &config.spi.delay_usecs, "spi mode");
 	spidev_set(fd, SPI_IOC_RD_BITS_PER_WORD, &config.spi.bits_per_word, "spi bits per word");
-	//spidev_set(fd, SPI_IOC_RD_MODE, &config.spi.cs_change, "spi mode");
 
 	if (ioctl(fd, SPI_IOC_MESSAGE(msg->num_xfers), msg->xfers) < 0)
 		fatal_error("spi message failed");
@@ -757,124 +756,6 @@ static int spidev_send(int argc, char *argv[]) {
 	free (msg);
 	return ret;
 }
-
-#if 0
-int asdfasdfasdfqwerwerwerxcvxcvxcv(void) {
-	struct mcp2210_ioctl_data *data;
-	struct mcp2210_ioctl_data_config *cfg;
-	struct mcp2210_device dev;
-	const size_t struct_size = sizeof(*data) + 0x400;
-//	unsigned char buf[0x100];
-//	char strbuf[7] = "[0] = ";
-	int ret = 0;
-//	unsigned i;
-
-	data = malloc(struct_size);
-	if (!data) {
-		fatal_error("no mem");
-		return -ENOMEM;
-	}
-
-	memset(data, 0, struct_size);
-	data->struct_size = struct_size;
-	cfg = &data->body.config;
-
-	if (mcp2210_open(&dev, config.name))
-		fatal_error("open failed");
-
-	ret = mcp2210_ioctl(&dev, MCP2210_IOCTL_CONFIG_GET, (unsigned long)data);
-	if (ret < 0)
-		fatal_error("ioctl failed");
-
-	fprintf(stderr, "is_spi_probed:  %hhu\n", cfg->is_spi_probed);
-	fprintf(stderr, "is_gpio_probed: %hhu\n", cfg->is_gpio_probed);
-	fprintf(stderr, "have_config: %hhu\n", cfg->have_config);
-	dump_chip_settings("", 0, ".chip = ", &cfg->chip);
-
-	dump_board_config("", 0, ".config = ", &cfg->config);
-#if 0
-	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
-		strbuf[1] = '0' + i;
-		dump_pin_config("", 2, strbuf, &cfg.config.pins[i]);
-	}
-#endif
-
-	free(data);
-	mcp2210_close(&dev);
-	return ret;
-
-/*
-	cfg.config.pins[0].name[0] = 'l';
-	ret = ioctl(fd, mcp2210_ioctl_map[MCP2210_IOCTL_CONFIG_SET], &cfg);
-	if (ret == -1)
-		pabort("config");
-*/
-#if 0
-
-	eeprom_cmd.addr = 0;
-	eeprom_cmd.size = 0x1;
-	eeprom_cmd.is_read = 1;
-	eeprom_cmd.buf = buf;
-
-	ret = ioctl(fd, mcp2210_ioctl_map[MCP2210_IOCTL_EEPROM], &eeprom_cmd);
-	if (ret == -1)
-		pabort("read");
-
-	printf("value = 0x%02hhx\n", buf[0]);
-
-	eeprom_cmd.is_read = 0;
-	buf[0] = 0xc0;
-	buf[1] = 0x1d;
-	ret = ioctl(fd, mcp2210_ioctl_map[MCP2210_IOCTL_EEPROM], &eeprom_cmd);
-	if (ret == -1)
-		pabort("write");
-
-#if 0
-	/*
-	 * spi mode
-	 */
-	ret = ioctl(fd, SPI_IOC_WR_MODE, &mode);
-	if (ret == -1)
-		pabort("can't set spi mode");
-
-	ret = ioctl(fd, SPI_IOC_RD_MODE, &mode);
-	if (ret == -1)
-		pabort("can't get spi mode");
-
-	/*
-	 * bits per word
-	 */
-	ret = ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
-	if (ret == -1)
-		pabort("can't set bits per word");
-
-	ret = ioctl(fd, SPI_IOC_RD_BITS_PER_WORD, &bits);
-	if (ret == -1)
-		pabort("can't get bits per word");
-
-	/*
-	 * max speed hz
-	 */
-	ret = ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
-	if (ret == -1)
-		pabort("can't set max speed hz");
-
-	ret = ioctl(fd, SPI_IOC_RD_MAX_SPEED_HZ, &speed);
-	if (ret == -1)
-		pabort("can't get max speed hz");
-
-	printf("spi mode: %d\n", mode);
-	printf("bits per word: %d\n", bits);
-	printf("max speed: %d Hz (%d KHz)\n", speed, speed/1000);
-
-	transfer(fd);
-#endif
-#endif
-
-	//mcp2210_close(&dev);
-	return ret;
-}
-#endif
 
 struct command {
 	const char *name;
@@ -1024,7 +905,6 @@ static void show_usage() {
 static int process_args(int argc, char *argv[])
 {
 	int c;
-/* FIXME: mightily broken :) */
 	while (1) {
 		static struct option long_options[] = {
 			{ "help",    no_argument,	0, 'h' },

@@ -1284,23 +1284,6 @@ static void delayed_work_callback(struct work_struct *work)
 			dev->debug_chatter_count = 0;
 	}
 
-	/* FIXME: configuration hack */
-#if 0
-	if (!dev->cur_cmd) {
-		if (dev->do_spi_probe) {
-			BUG_ON(dev->spi_master);
-			dev->do_spi_probe = 0;
-			spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
-			//fake_config(dev);
-
-			/* allow the device to suspend now */
-			usb_autopm_put_interface(dev->intf);
-			spin_lock_irqsave(&dev->dev_spinlock, irqflags);
-		}
-
-		goto exit_reschedule;
-	}
-#endif
 	if (!dev->cur_cmd)
 		goto exit_reschedule;
 

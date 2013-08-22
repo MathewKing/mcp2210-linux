@@ -324,11 +324,6 @@ struct mcp2210_board_config *creek_decode(
 		}
 
 		switch (cfg->mode) {
-		case MCP2210_PIN_GPIO:
-			cfg->body.gpio.direction = chip_settings->gpio_direction >> i & 1;
-			cfg->body.gpio.init_value = chip_settings->gpio_value >> i & 1;
-			break;
-
 		case MCP2210_PIN_SPI:
 			dec.spi_pin_num[dec.spi_count++] = i;
 			break;
@@ -349,7 +344,7 @@ struct mcp2210_board_config *creek_decode(
 
 	for (i = 0; i < dec.spi_count; ++i) {
 		u8 pin = dec.spi_pin_num[i];
-		struct mcp2210_pin_config_spi *spi = &tmp_pins[pin].body.spi;
+		struct mcp2210_pin_config_spi *spi = &tmp_pins[pin].spi;
 
 		spi->max_speed_hz	   = unpack_uint_opt(&bs, 10, 2,
 							     MCP2210_MAX_SPEED);
@@ -502,23 +497,8 @@ int creek_encode(const struct mcp2210_board_config *src,
 			return -EINVAL;
 		}
 
-		switch (pin->mode) {
-		case MCP2210_PIN_GPIO:
-#if 0
-			/* FIXME: what to do with this? */
-			if (pin->body.gpio.direction  != chip->gpio_direction >> (i & 1)
-			 || pin->body.gpio.init_value != chip->gpio_value >> (i & 1)) {
-				printk(KERN_ERR "chip_settings don't match board_config.\n");
-				return -EINVAL;
-			}
-#endif
-			break;
-
-		case MCP2210_PIN_SPI:
+		if (pin->mode == MCP2210_PIN_SPI) {
 			data.spi_pin_num[data.spi_count++] = i;
-			break;
-
-		default:
 			break;
 		}
 
@@ -529,7 +509,7 @@ int creek_encode(const struct mcp2210_board_config *src,
 	/* write spi setting data */
 	for (i = 0; i < data.spi_count; ++i) {
 		u8 pin = data.spi_pin_num[i];
-		const struct mcp2210_pin_config_spi *spi = &src->pins[pin].body.spi;
+		const struct mcp2210_pin_config_spi *spi = &src->pins[pin].spi;
 
 		pack_uint_opt(&bs, spi->max_speed_hz, 10, 2, MCP2210_MAX_SPEED);
 		pack_uint_opt(&bs, spi->min_speed_hz, 10, 2, MCP2210_MIN_SPEED);
@@ -918,19 +898,7 @@ void dump_pin_config(const char *level, unsigned indent, const char *start,
 	       level, get_indent(indent), start, cfg,
 	       ind, cfg->mode, get_pin_mode_str(cfg->mode));
 
-	switch (cfg->mode) {
-	case MCP2210_PIN_GPIO:
-		printk("%s%s.body.gpio {\n"
-		       "%s.direction  = %u\n"
-		       "%s.init_value = %u\n"
-		       "%s}\n",
-		       level, ind,
-		       ind2, cfg->body.gpio.direction,
-		       ind2, cfg->body.gpio.init_value,
-		       ind);
-		break;
-
-	case MCP2210_PIN_SPI:
+	if (cfg->mode == MCP2210_PIN_SPI) {
 		printk("%s%s.body.spi {\n"
 		       "%s.max_speed_hz          = %u\n"
 		       "%s.min_speed_hz          = %u\n"
@@ -942,23 +910,16 @@ void dump_pin_config(const char *level, unsigned indent, const char *start,
 		       "%s.delay_between_xfers   = %hu\n"
 		       "%s}\n",
 		       level, ind,
-		       ind2, cfg->body.spi.max_speed_hz,
-		       ind2, cfg->body.spi.min_speed_hz,
-		       ind2, cfg->body.spi.mode,
-		       ind2, cfg->body.spi.bits_per_word,
-		       ind2, cfg->body.spi.cs_to_data_delay,
-		       ind2, cfg->body.spi.last_byte_to_cs_delay,
-		       ind2, cfg->body.spi.delay_between_bytes,
-		       ind2, cfg->body.spi.delay_between_xfers,
+		       ind2, cfg->spi.max_speed_hz,
+		       ind2, cfg->spi.min_speed_hz,
+		       ind2, cfg->spi.mode,
+		       ind2, cfg->spi.bits_per_word,
+		       ind2, cfg->spi.cs_to_data_delay,
+		       ind2, cfg->spi.last_byte_to_cs_delay,
+		       ind2, cfg->spi.delay_between_bytes,
+		       ind2, cfg->spi.delay_between_xfers,
 		       ind);
-
-		break;
-
-	case MCP2210_PIN_DEDICATED:
-	case MCP2210_PIN_UNUSED:
-		break;
-		/* nothing */
-	};
+	}
 
 	printk("%s%s.modalias = %s\n"
 	       "%s.name     = %s\n"

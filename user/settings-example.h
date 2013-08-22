@@ -24,6 +24,8 @@
 #ifndef _SETTINGS_H
 #define _SETTINGS_H
 
+#include <linux/spi/spidev.h>
+
 static const struct mcp2210_chip_settings my_chip_settings = {
 	.pin_mode = {
 		MCP2210_PIN_SPI,
@@ -36,8 +38,8 @@ static const struct mcp2210_chip_settings my_chip_settings = {
 		MCP2210_PIN_SPI,
 		MCP2210_PIN_GPIO,
 	},
-	.gpio_value		= 3,
-	.gpio_direction		= 3,
+	.gpio_value		= 0x0002,
+	.gpio_direction		= 0x0140,
 	.other_settings		= 0x01,
 	.nvram_access_control	= 0,
 	.password = {0, 0, 0, 0, 0, 0, 0, 0},
@@ -55,8 +57,8 @@ static const struct mcp2210_chip_settings my_power_up_chip_settings = {
 		MCP2210_PIN_SPI,
 		MCP2210_PIN_GPIO,
 	},
-	.gpio_value		= 3,
-	.gpio_direction		= 3,
+	.gpio_value		= 0x0002,
+	.gpio_direction		= 0x0140,
 	.other_settings		= 0x01,
 	.nvram_access_control	= 0,
 	.password = {0, 0, 0, 0, 0, 0, 0, 0},
@@ -95,10 +97,10 @@ static const struct mcp2210_board_config my_board_config = {
 	.pins = {
 		{
 			.mode = MCP2210_PIN_SPI,
-			.body.spi.max_speed_hz = 20000,
-			.body.spi.min_speed_hz = 2000,
-			.body.spi.mode = SPI_MODE_3,
-			.body.spi.bits_per_word = 8,
+			.spi.max_speed_hz = 20000,
+			.spi.min_speed_hz = 2000,
+			.spi.mode = SPI_MODE_3,
+			.spi.bits_per_word = 8,
 /* CS must be de-asserted between each byte in a transaction.  You send zeros
  * when you are receiving the response.
  *
@@ -114,10 +116,10 @@ static const struct mcp2210_board_config my_board_config = {
  * tdisSDO     | Data output disable time     | 47  ns max
  * tvSDO       | Data output valid time       | 57  ns max
  */
-			.body.spi.cs_to_data_delay = 1,
-			.body.spi.last_byte_to_cs_delay = 1,
-			.body.spi.delay_between_bytes = 1,
-			.body.spi.delay_between_xfers = 1,
+			.spi.cs_to_data_delay = 1,
+			.spi.last_byte_to_cs_delay = 1,
+			.spi.delay_between_bytes = 1,
+			.spi.delay_between_xfers = 1,
 			.modalias = "spidev",
 			.name = "L6470",
 
@@ -125,8 +127,7 @@ static const struct mcp2210_board_config my_board_config = {
 				"motor driver with motion engine and SPI" */
 		}, {
 			.mode = MCP2210_PIN_GPIO,
-			.body.gpio.direction = MCP2210_GPIO_OUTPUT,
-			.body.gpio.init_value = 1,
+			.name = "unused"
 		}, {
 			.mode = MCP2210_PIN_DEDICATED,
 			.name = "SSPND"
@@ -141,18 +142,17 @@ static const struct mcp2210_board_config my_board_config = {
 			.name = "USBCFG",
 		}, {
 			.mode = MCP2210_PIN_GPIO,
-			.body.gpio.direction = MCP2210_GPIO_INPUT,
 			.name = "MOTION",
 		}, {
 			.mode = MCP2210_PIN_SPI,
-			.body.spi.max_speed_hz = 20000,
-			.body.spi.min_speed_hz = 5000,
-			.body.spi.mode = SPI_MODE_3,
-			.body.spi.bits_per_word = 8,
-			.body.spi.cs_to_data_delay = 2,
-			.body.spi.last_byte_to_cs_delay = 2,
-			.body.spi.delay_between_bytes = 4,
-			.body.spi.delay_between_xfers = 0,
+			.spi.max_speed_hz = 20000,
+			.spi.min_speed_hz = 5000,
+			.spi.mode = SPI_MODE_3,
+			.spi.bits_per_word = 8,
+			.spi.cs_to_data_delay = 2,
+			.spi.last_byte_to_cs_delay = 2,
+			.spi.delay_between_bytes = 4,
+			.spi.delay_between_xfers = 0,
 			.modalias = "spidev",
 			.name = "ADNS-9800",
 		}, {
