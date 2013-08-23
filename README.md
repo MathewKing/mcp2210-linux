@@ -99,32 +99,32 @@ For mask, you OR together the values for the configuration option(s) you want to
 	<td>1</td>
 	<td>chip settings (current)</td>
 	<td>3.2.4</td>
-	<td>[`struct mcp2210_chip_settings`](mcp2210.h#L251)</td>
+	<td><tt><a href="mcp2210.h#L251">struct mcp2210_chip_settings</a></tt></td>
 </tr><tr>
 	<td>2</td>
 	<td>chip settings (power-up)</td>
 	<td>3.1.1</td>
-	<td>[`struct mcp2210_chip_settings`](mcp2210.h#L251)</td>
+	<td><tt><a href="mcp2210.h#L251">struct mcp2210_chip_settings</a></tt></td>
 </tr><tr>
 	<td>4</td>
 	<td>spi transfer settings (current)</td>
 	<td>3.2.2</td>
-	<td>[`struct mcp2210_spi_xfer_settings`](mcp2210.h#L282)</td>
+	<td><tt><a href="mcp2210.h#L282">struct mcp2210_spi_xfer_settings</a></tt></td>
 </tr><tr>
 	<td>8</td>
 	<td>spi transfer settings (power-up)</td>
 	<td>3.1.2</td>
-	<td>[`struct mcp2210_spi_xfer_settings`](mcp2210.h#L282)</td>
+	<td><tt><a href="mcp2210.h#L282">struct mcp2210_spi_xfer_settings</a></tt></td>
 </tr><tr>
 	<td>16</td>
 	<td>key parameters (power-up)</td>
 	<td>3.1.3</td>
-	<td>[`struct mcp2210_usb_key_params`](mcp2210.h#L294)</td>
+	<td><tt><a href="mcp2210.h#L294">struct mcp2210_usb_key_params</a></tt></td>
 </tr><tr>
-	<td>31</td>
+	<td>32</td>
 	<td>board config</td>
 	<td>n/a</td>
-	<td>[`struct mcp2210_board_config`](mcp2210.h#L520)</td>
+	<td><tt><a href="mcp2210.h#L520">struct mcp2210_board_config</a></tt></td>
 </tr><tr>
 </table>
 
