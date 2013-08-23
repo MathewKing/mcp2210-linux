@@ -23,19 +23,30 @@
  * Incomplete list:
  * - major number from maintainer?
  * - GPIO not implemented
+ * - add polling for gpio & dedicated interrupt pin
  *
  * Fix list:
  * - re-implement device failure
- * - When a command dies and can't be retried, we need to do something more than just log it.
+ * - When a command dies and can't be retried, we need to do something more
+ *   than just log it.
  * - change ioctl to netlink
- * - ioctl interface not friendly with ABIs where kernel & user space have different sized ptrs (x32, etc.) (I say fix this when we convert to netlink)
+ * - ioctl interface not friendly with ABIs where kernel & user space have
+ *   different sized ptrs (x32, etc.) (I say fix this when we convert to
+ *   netlink)
  * - obey struct spi_transfer cs_change
- * - "wait" on set config ioctl not respected
  *
  * Tweak list:
+ * - change "flipping" to go from endianness change to moving the data to an
+ *   unpacked struct because using these packed everywhere really seems to
+ *   bloat some code.
  * - examine locking and refine
  * - better prediction of how long SPI transfers will take and appropriate
- *   scheduling so that we don't unneccessarily request a status.
+ *   scheduling so that we don't unneccessarily request a status (update: this
+ *   has some stuff now, but it may need an audit)
+ * - include/linux/spi/spi.h: extend mode (to u16), spi_device, et. al. to
+ *   accomodate missing features (timing, drop cs bewteen words, etc.)
+ *   - update spidev driver & userspace to support
+ *   - update mcp2210 driver to use them.
  *
  * Home page:
  *	https://www.microchip.com/wwwproducts/Devices.aspx?dDocName=en556614
