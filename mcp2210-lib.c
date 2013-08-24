@@ -999,7 +999,7 @@ void dump_dev(const char *level, unsigned indent, const char *start,
 	       "%s.udev            = %p\n"
 	       "%s.intf            = %p\n"
 	       "%s.spi_master      = %p\n"
-	       "%s.gpio_chip       = %p\n"
+//	       "%s.gpio_chip       = %p\n"
 	       "%s.dev_spinlock    = %slocked\n"
 	       "%s.queue_spinlock  = %slocked\n"
 #ifdef CONFIG_MCP2210_DEBUG
@@ -1011,7 +1011,7 @@ void dump_dev(const char *level, unsigned indent, const char *start,
 	       ind, dev->udev,
 	       ind, dev->intf,
 	       ind, dev->spi_master,
-	       ind, dev->gpio_chip,
+//	       ind, dev->gpio_chip,
 	       ind, spin_is_locked((struct spinlock*)&dev->dev_spinlock)
 		    ? "" : "un",
 	       ind, spin_is_locked((struct spinlock*)&dev->queue_spinlock)

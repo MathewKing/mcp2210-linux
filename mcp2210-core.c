@@ -22,8 +22,8 @@
  * TODO:
  * Incomplete list:
  * - major number from maintainer?
- * - GPIO not implemented
  * - add polling for gpio & dedicated interrupt pin
+ * - honor cs_gpio and allow SPI where idle_cs == active_cs
  *
  * Fix list:
  * - re-implement device failure
@@ -808,10 +808,11 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 {
 	unsigned i;
 	struct mcp2210_chip_settings chip_settings;
+	int ret;
 
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		BUG_ON(dev->spi_master);
-		BUG_ON(dev->gpio_chip);
+		BUG_ON(dev->s.is_gpio_probed);
 		BUG_ON(dev->config);
 		BUG_ON(!dev->s.have_chip_settings);
 	}
@@ -819,12 +820,12 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 		mcp2210_err("ERROR: already have dev->config!");
 	if (dev->spi_master)
 		mcp2210_err("ERROR: already have dev->spi_master!");
-	if (dev->gpio_chip)
-		mcp2210_err("ERROR: already have dev->gpio_chip!");
+	if (dev->s.is_gpio_probed)
+		mcp2210_err("ERROR: gpio already probed");
 	if (!dev->s.have_chip_settings)
 		mcp2210_err("ERROR: don't have dev->s.have_chip_settings!");
 
-	if (dev->config || dev->spi_master || dev->gpio_chip || !dev->s.have_chip_settings)
+	if (dev->config || dev->spi_master || dev->s.is_gpio_probed || !dev->s.have_chip_settings)
 		return -EPERM;
 
 	dev->s.cur_spi_config = -1;
@@ -839,15 +840,35 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 		chip_settings.pin_mode[i] = (mode != MCP2210_PIN_UNUSED)
 					  ? mode
 					  : MCP2210_PIN_GPIO;
+		dev->names[i] = dev->config->pins[i].name;
 	}
 
 	mcp2210_add_ctl_cmd(dev, MCP2210_CMD_SET_CHIP_CONFIG, 0, &chip_settings,
 			    sizeof(chip_settings), false, GFP_ATOMIC);
 
+#ifdef CONFIG_MCP2210_SPI
 	mcp2210_info("----------probing SPI----------\n");
-	mcp2210_spi_probe(dev);
+	ret = mcp2210_spi_probe(dev);
+	if (ret) {
+		mcp2210_err("spi probe failed: %de", ret);
+		return 0;
+	}
+	dev->s.is_spi_probed = 1;
+#endif
+
 	if (!dev->cur_cmd)
 		process_commands(dev, GFP_KERNEL, 0);
+
+#ifdef CONFIG_MCP2210_GPIO
+	mcp2210_info("----------probing GPIO----------\n");
+	ret = mcp2210_gpio_probe(dev);
+	if (ret) {
+		mcp2210_err("gpio probe failed: %de", ret);
+		return 0;
+	}
+	dev->s.is_gpio_probed = 1;
+#endif
+
 	usb_autopm_put_interface(dev->intf);
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		mcp2210_info("----------new dump----------\n");
@@ -905,6 +926,9 @@ void mcp2210_disconnect(struct usb_interface *intf)
 
 	if (dev->spi_master)
 		mcp2210_spi_remove(dev);
+
+	if (dev->s.is_gpio_probed)
+		mcp2210_gpio_remove(dev);
 
 	/* TODO: free GPIO resources here */
 

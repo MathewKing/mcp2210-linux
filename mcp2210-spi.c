@@ -83,7 +83,7 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	int ret;
 	unsigned i;
 
-	mcp2210_info("mcp2210_spi_probe\n");
+	mcp2210_info();
 
 	BUG_ON(!dev);
 	BUG_ON(!dev->config);

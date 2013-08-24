@@ -492,6 +492,7 @@ struct mcp2210_state {
 	u8 have_config:1;
 	u8 is_spi_probed:1;
 	u8 is_gpio_probed:1;
+//	u8 chip_settings_dirty:1;
 	struct mcp2210_chip_settings chip_settings;
 	struct mcp2210_chip_settings power_up_chip_settings;
 	struct mcp2210_spi_xfer_settings spi_settings;
@@ -669,9 +670,8 @@ struct mcp2210_device {
 	struct usb_device *udev;
 	struct usb_interface *intf;
 	struct spi_master *spi_master;
-	struct gpio_chip *gpio_chip;
-
 	spinlock_t dev_spinlock;
+
 	spinlock_t queue_spinlock;
 	struct mutex io_mutex;
 	struct kref kref;
@@ -698,6 +698,8 @@ struct mcp2210_device {
 	u8 eeprom_state[64];
 	u8 eeprom_cache[256];
 #endif
+	const char *names[MCP2210_NUM_PINS];
+	struct gpio_chip gpio;
 };
 
 
@@ -739,21 +741,33 @@ void calculate_spi_settings(struct mcp2210_spi_xfer_settings *dest,
 /*****************************************************************************
  * mcp2210-ioctl.c
  */
+#ifdef CONFIG_MCP2210_IOCTL
 long mcp2210_ioctl(struct file *file, unsigned int request, unsigned long arg);
+#endif
 
 
 /*****************************************************************************
  * mcp2210-spi.c
  */
-int mcp2210_spi_probe(struct mcp2210_device *dev);
+#ifdef CONFIG_MCP2210_GPIO
+int  mcp2210_spi_probe (struct mcp2210_device *dev);
 void mcp2210_spi_remove(struct mcp2210_device *dev);
+#else
+static inline int  mcp2210_spi_probe (struct mcp2210_device *dev) {return 0;}
+static inline void mcp2210_spi_remove(struct mcp2210_device *dev) {}
+#endif /* CONFIG_MCP2210_GPIO */
 
 
 /*****************************************************************************
  * mcp2210-gpio.c
  */
-int mcp2210_gpio_probe(struct mcp2210_device *dev);
+#ifdef CONFIG_MCP2210_GPIO
+int  mcp2210_gpio_probe (struct mcp2210_device *dev);
 void mcp2210_gpio_remove(struct mcp2210_device *dev);
+#else
+static inline int  mcp2210_gpio_probe (struct mcp2210_device *dev) {return 0;}
+static inline void mcp2210_gpio_remove(struct mcp2210_device *dev) {}
+#endif /* CONFIG_MCP2210_GPIO */
 
 
 /*****************************************************************************
@@ -761,17 +775,23 @@ void mcp2210_gpio_remove(struct mcp2210_device *dev);
  */
 #ifdef CONFIG_MCP2210_EEPROM
 /* locks dev->eeprom_spinlock */
-int mcp2210_eeprom_read(struct mcp2210_device *dev, u8 *dest, u8 addr,
-			u16 size, mcp2210_complete_t complete, void *context,
-			gfp_t gfp_flags);
-int mcp2210_eeprom_write(struct mcp2210_device *dev, const u8 *src, u8 addr,
-			 u16 size, mcp2210_complete_t complete, void *context,
-			 gfp_t gfp_flags);
+int
+mcp2210_eeprom_read(struct mcp2210_device *dev, u8 *dest, u8 addr, u16 size,
+		    mcp2210_complete_t complete, void *context,
+		    gfp_t gfp_flags);
+int
+mcp2210_eeprom_write(struct mcp2210_device *dev, const u8 *src, u8 addr,
+		     u16 size, mcp2210_complete_t complete, void *context,
+		     gfp_t gfp_flags);
 #else
-# define mcp2210_eeprom_read(dev, dest, addr, size, complete, context,	\
-							gfp_flags) (0)
-# define mcp2210_eeprom_write(dev, src, addr, size, complete, context,	\
-							gfp_flags) (0)
+static inline int
+mcp2210_eeprom_read(struct mcp2210_device *dev, u8 *dest, u8 addr, u16 size,
+		    mcp2210_complete_t complete, void *context,
+		    gfp_t gfp_flags) {return 0;}
+static inline int
+mcp2210_eeprom_write(struct mcp2210_device *dev, const u8 *src, u8 addr,
+		     u16 size, mcp2210_complete_t complete, void *context,
+		     gfp_t gfp_flags) {return 0;}
 #endif
 
 

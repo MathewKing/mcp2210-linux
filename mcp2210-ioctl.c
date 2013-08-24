@@ -358,7 +358,7 @@ static long mcp2210_ioctl_config_get(struct mcp2210_device *dev, struct ioctl_re
 	idcs->have_usb_key_params	  = devs->have_usb_key_params;
 	idcs->have_config		  = !!dev->config;
 	idcs->is_spi_probed		  = !!dev->spi_master;
-	idcs->is_gpio_probed		  = !!dev->gpio_chip;
+	idcs->is_gpio_probed		  = dev->s.is_gpio_probed;
 
 	if (devs->have_chip_settings)
 		memcpy(&idcs->chip_settings,
