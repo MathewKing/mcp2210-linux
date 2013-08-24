@@ -84,6 +84,12 @@ extern "C" {
 #define mcp2210_info(fmt, ...)	mcp2210_log(KERN_INFO,	fmt, ##__VA_ARGS__)
 #define mcp2210_debug(fmt, ...)	mcp2210_log(KERN_DEBUG,	fmt, ##__VA_ARGS__)
 
+#ifdef CONFIG_MCP2210_DEBUG
+# define MCP_ASSERT(cond) BUG_ON(!(cond))
+#else
+# define MCP_ASSERT(cond) do{}while(0)
+#endif
+
 #ifdef CONFIG_MCP2210_DEBUG_VERBOSE
 void dump_dev(
 	const char *level, unsigned indent, const char *start,

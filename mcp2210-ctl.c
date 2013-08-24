@@ -219,8 +219,6 @@ static void store_usb_key_params(struct mcp2210_device *dev,
 	dev->s.have_usb_key_params = 1;
 }
 
-
-
 /* if the command needs to be repeated, then just set the state to NEW before
  * calling process_commands */
 static int ctl_complete_urb(struct mcp2210_cmd *cmd_head)
@@ -325,6 +323,22 @@ static int ctl_complete_urb(struct mcp2210_cmd *cmd_head)
 	case MCP2210_CMD_SPI_CANCEL:
 		mcp2210_info("MCP2210_CMD_SPI_CANCEL");
 		dev->spi_in_flight = 0;
+		break;
+	case MCP2210_CMD_GET_PIN_DIR:
+		dev->s.chip_settings.gpio_direction = le16_to_cpu(rep->body.gpio);
+		mcp2210_info("MCP2210_CMD_GET_PIN_DIR");
+		break;
+	case MCP2210_CMD_SET_PIN_DIR:
+		dev->s.chip_settings.gpio_direction = req->body.gpio;
+		mcp2210_info("MCP2210_CMD_SET_PIN_DIR");
+		break;
+	case MCP2210_CMD_GET_PIN_VALUE:
+		dev->s.chip_settings.gpio_value = le16_to_cpu(rep->body.gpio);
+		mcp2210_info("MCP2210_CMD_GET_PIN_VALUE");
+		break;
+	case MCP2210_CMD_SET_PIN_VALUE:
+		dev->s.chip_settings.gpio_value = req->body.gpio;
+		mcp2210_info("MCP2210_CMD_SET_PIN_VALUE");
 		break;
 
 	default:

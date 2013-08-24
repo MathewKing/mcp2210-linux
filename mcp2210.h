@@ -206,6 +206,7 @@ enum mcp2210_pin_mode {
 };
 
 enum mcp2210_gpio_direction {
+	MCP2210_GPIO_NO_CHANGE	= -1,
 	MCP2210_GPIO_OUTPUT	= 0,
 	MCP2210_GPIO_INPUT	= 1
 };
@@ -670,8 +671,8 @@ struct mcp2210_device {
 	struct usb_device *udev;
 	struct usb_interface *intf;
 	struct spi_master *spi_master;
-	spinlock_t dev_spinlock;
 
+	spinlock_t dev_spinlock;
 	spinlock_t queue_spinlock;
 	struct mutex io_mutex;
 	struct kref kref;
