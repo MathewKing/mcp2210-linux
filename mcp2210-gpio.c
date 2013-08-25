@@ -268,6 +268,20 @@ static int set_dir_and_value(struct gpio_chip *chip, unsigned pin, int dir,
 		      "set_vals = %hhu  , new_dirs = %hhu",
 		      pin_vals, pin_dirs, new_vals, new_dirs,
 		      set_dirs, set_vals);
+	if (set_vals & set_dirs) {
+		/* I'm not aware of any other mechanism to change the direction
+		 * to output and the value at the same time, and I don't think
+		 * this device supports changing the direction to output, but
+		 * leaving it's actual state in high-z until you give it a
+		 * value, so we'll just set the full chip settings.
+		 */
+		struct mcp2210_chip_settings cs = dev->s.chip_settings;
+
+		cs.gpio_value	  = new_vals;
+		cs.gpio_direction = new_dirs;
+		return do_gpio_cmd(dev, MCP2210_CMD_SET_CHIP_CONFIG, &cs,
+				  sizeof(cs));
+	}
 
 	if (set_vals) {
 		ret = do_gpio_cmd(dev, MCP2210_CMD_SET_PIN_VALUE, &new_vals,
