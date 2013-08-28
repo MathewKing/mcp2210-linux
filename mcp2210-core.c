@@ -51,7 +51,7 @@
  * Home page:
  *	https://www.microchip.com/wwwproducts/Devices.aspx?dDocName=en556614
  * Datasheet:
- * 	https://www.microchip.com/downloads/en/DeviceDoc/22288A.pdf
+ *	https://www.microchip.com/downloads/en/DeviceDoc/22288A.pdf
  *
  * Background:
  *
@@ -191,13 +191,12 @@ static bool reschedule_delayed_work(struct mcp2210_device *dev,
 				    unsigned long _jiffies);
 static inline bool reschedule_delayed_work_ms(struct mcp2210_device *dev,
 					      unsigned int ms);
-static void complete_urb(struct urb *urb);
-//static void complete_cmd(struct mcp2210_cmd *cmd);
-static int submit_urbs(struct mcp2210_cmd *cmd, gfp_t gfp_flags);
-
 static void delayed_work_callback(struct work_struct *work);
 static int unlink_urbs(struct mcp2210_device *dev);
 static void kill_urbs(struct mcp2210_device *dev, unsigned long *irqflags);
+
+static void complete_urb(struct urb *urb);
+static int submit_urbs(struct mcp2210_cmd *cmd, gfp_t gfp_flags);
 
 static inline long jiffdiff(unsigned long a, unsigned long b)
 {
@@ -215,10 +214,11 @@ int debug_level	  = CONFIG_MCP2210_DEBUG_INITIAL;
 int creek_enabled = IS_ENABLED(CONFIG_MCP2210_CREEK);
 int dump_urbs	  = IS_ENABLED(CONFIG_MCP2210_DEBUG);
 int dump_commands = IS_ENABLED(CONFIG_MCP2210_DEBUG_VERBOSE);
-module_param(debug_level, int, 0664);
-module_param(creek_enabled, int, 0664);
-module_param(dump_urbs, int, 0664);
-module_param(dump_commands, int, 0664);
+
+module_param(debug_level,	int, 0664);
+module_param(creek_enabled,	int, 0664);
+module_param(dump_urbs,		int, 0664);
+module_param(dump_commands,	int, 0664);
 
 /******************************************************************************
  * USB Driver structs
@@ -652,7 +652,6 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	struct mcp2210_device *dev;
 	struct usb_host_endpoint *ep, *ep_end;
 	int ret = -ENODEV;
-//	int i;
 
 	printk("mcp2210_probe\n");
 
@@ -786,6 +785,8 @@ error0:
 
 	return ret;
 }
+
+
 #if 0
 static void fail_device(struct mcp2210_device *dev, int error)
 {
@@ -880,7 +881,6 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 	return 0;
 }
 
-
 // can sleep, like probe
 void mcp2210_disconnect(struct usb_interface *intf)
 {
@@ -907,7 +907,7 @@ void mcp2210_disconnect(struct usb_interface *intf)
 		if (cmd->complete) {
 			cmd->status = -ESHUTDOWN;
 			spin_unlock(&dev->queue_spinlock);
- 			ret = cmd->complete(cmd, cmd->context);
+			ret = cmd->complete(cmd, cmd->context);
 			spin_lock(&dev->queue_spinlock);
 		} else
 			ret = 0;
@@ -1293,7 +1293,7 @@ static void delayed_work_callback(struct work_struct *work)
 		atomic_dec(&dev->manager_running);
 		mcp2210_crit("BUG: two instances of delayed work running!******");
 
-		//BUG();
+		BUG();
 		return;
 	}
 #endif
