@@ -64,7 +64,7 @@ int mcp2210_gpio_probe(struct mcp2210_device *dev)
 	gpio->label		= "mcp2210";
 	gpio->dev		= &dev->udev->dev;
 	gpio->owner		= THIS_MODULE;
-	INIT_LIST_HEAD(&gpio->list);
+//	INIT_LIST_HEAD(&gpio->list);
 
 //	gpio->request		= request;
 //	gpio->free		= free;
@@ -176,7 +176,7 @@ static int do_gpio_cmd(struct mcp2210_device *dev, u8 cmd_code, void *body,
 	cmd->head.complete = complete_cmd_chip;
 	cmd->head.context = &c;
 
-	ret = mcp2210_add_or_free_cmd(&cmd->head);
+	ret = mcp2210_add_cmd(&cmd->head, true);
 	if (ret)
 		return ret;
 
@@ -315,6 +315,9 @@ static int get(struct gpio_chip *chip, unsigned offset)
 	int val;
 	int dir;
 	int ret;
+	unsigned long now = jiffies;
+	unsigned long last_poll;
+	u32 stale_usecs;
 
 	BUG_ON(offset >= MCP2210_NUM_PINS);
 
@@ -323,10 +326,17 @@ static int get(struct gpio_chip *chip, unsigned offset)
 	spin_lock_irqsave(&dev->dev_spinlock, irqflags);
 		val = 1 & (dev->s.chip_settings.gpio_value >> offset);
 		dir = 1 & (dev->s.chip_settings.gpio_direction >> offset);
+		last_poll = dev->s.last_poll_gpio;
+		stale_usecs = dev->config->stale_gpio_usecs;
 	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
 
-	/* TODO: we need to add the ability to return the last-known value
-	 * returned by polling rather than querying across USB each time */
+	/* If the value was read within stale_usecs microseconds, then we just
+	 * return that value */
+	if (stale_usecs && time_before(now, last_poll
+					  + usecs_to_jiffies(stale_usecs))) {
+		return val;
+	}
+
 	if (dir == MCP2210_GPIO_OUTPUT)
 		return val;
 

@@ -33,6 +33,7 @@
 # include <linux/usb.h>
 # include <linux/spi/spi.h>
 # include <linux/gpio.h>
+# include <linux/timer.h>
 # include <linux/jiffies.h>
 #else
 # include <stdint.h>
@@ -51,14 +52,8 @@ extern "C" {
 #endif /* __cplusplus */
 
 
-#ifdef __KERNEL__
-/* module parameters */
-extern int debug_level;
-extern int creek_enabled;
-extern int dump_urbs;
-extern int dump_commands;
-
-#else /* macros, typedefs & hacks for userspace compliation */
+#ifndef __KERNEL__
+/* macros, typedefs & hacks for userspace compliation */
 # define BUG()			assert(0)
 # define BUG_ON(cond)		assert(!(cond))
 # define BUILD_BUG_ON(cond)	BUG_ON(cond)
@@ -247,6 +242,17 @@ enum mcp2210_endpoints {
  * is set to little prior to transmission in ctl_submit_prepare() and back to
  * the native endianess in ctl_complete_urb().
  */
+
+#if 0
+#define STRUCT_PREFIX mcp2210
+#include "mcp2210-structs.h"
+#undef STRUCT_PREFIX
+
+#define STRUCT_PREFIX packed_mcp2210
+#pragma pack(1)
+#include "mcp2210-structs.h"
+#pragma pack()
+#endif
 
 /**
  * mcp2210_msg - A USB message sent to or received from an MCP2210
@@ -475,6 +481,12 @@ struct mcp2210_pin_config {
 
 struct mcp2210_board_config {
 	struct mcp2210_pin_config pins[MCP2210_NUM_PINS];
+	u8 poll_gpio:1;
+	u8 poll_intr:1;
+	u32 poll_gpio_usecs;
+	u32 poll_intr_usecs;
+	u32 stale_gpio_usecs;
+	u32 stale_intr_usecs;
 	size_t strings_size;
 #ifndef __cplusplus
 	/* const invokes gcc bug #57977 */
@@ -502,13 +514,22 @@ struct mcp2210_state {
 	int cur_spi_config;
 	u16 idle_cs;
 	u16 active_cs;
-	unsigned long spi_delay_per_xfer;
 	unsigned long spi_delay_per_kb;
-	unsigned long spi_delay_between_xfers;
+	unsigned long last_poll_gpio;
+	unsigned long last_poll_intr;
+	//u16 gpio;
+	u16 interrupt_event_counter;
 };
 
 
 #ifdef __KERNEL__
+
+/* module parameters */
+extern int debug_level;
+extern int creek_enabled;
+extern int dump_urbs;
+extern int dump_commands;
+
 
 struct mcp2210_cmd;
 struct mcp2210_cmd_type {
@@ -684,6 +705,7 @@ struct mcp2210_device {
 	struct mcp2210_endpoint eps[2];
 
 	struct delayed_work delayed_work;
+	struct timer_list timer;
 
 	struct spi_device *chips[MCP2210_NUM_PINS];
 
@@ -699,7 +721,11 @@ struct mcp2210_device {
 	u8 eeprom_cache[256];
 #endif
 	const char *names[MCP2210_NUM_PINS];
+#if CONFIG_MCP2210_GPIO
 	struct gpio_chip gpio;
+	struct mcp2210_cmd_ctl cmd_poll_gpio;
+#endif
+	struct mcp2210_cmd_ctl cmd_poll_intr;
 };
 
 
@@ -714,7 +740,7 @@ int mcp2210_update_settings(struct mcp2210_device *dev);
 struct mcp2210_cmd *mcp2210_alloc_cmd(struct mcp2210_device *dev,
 				      const struct mcp2210_cmd_type *type,
 				      size_t size, gfp_t gfp_flags);
-int mcp2210_add_or_free_cmd(struct mcp2210_cmd *cmd);
+int mcp2210_add_cmd(struct mcp2210_cmd *cmd, bool free_if_dead);
 int process_commands(struct mcp2210_device *dev, gfp_t gfp_flags,
 		     const int lock_held);
 int mcp2210_set_pin_config(struct mcp2210_device *dev, unsigned pin,
@@ -849,7 +875,7 @@ static inline int mcp2210_add_ctl_cmd(struct mcp2210_device *dev, u8 cmd_code,
 	struct mcp2210_cmd_ctl *cmd = mcp2210_alloc_ctl_cmd(dev, cmd_code,
 			subcmd_code, body, body_size, is_mcp_endianness,
 			gfp_flags);
-	return mcp2210_add_or_free_cmd((void *)cmd);
+	return mcp2210_add_cmd((void *)cmd, true);
 }
 
 

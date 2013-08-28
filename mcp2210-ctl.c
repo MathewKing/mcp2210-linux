@@ -237,6 +237,7 @@ static int ctl_complete_urb(struct mcp2210_cmd *cmd_head)
 	case MCP2210_CMD_GET_CHIP_CONFIG:
 	case MCP2210_CMD_GET_PIN_DIR:
 	case MCP2210_CMD_GET_PIN_VALUE:
+	case MCP2210_CMD_GET_INTERRUPTS:
 		mcp2210_info("flip ep");
 		flip_ep_buffer(&dev->eps[EP_IN], false);
 		break;
@@ -325,7 +326,7 @@ static int ctl_complete_urb(struct mcp2210_cmd *cmd_head)
 		dev->spi_in_flight = 0;
 		break;
 	case MCP2210_CMD_GET_PIN_DIR:
-		dev->s.chip_settings.gpio_direction = le16_to_cpu(rep->body.gpio);
+		dev->s.chip_settings.gpio_direction = rep->body.gpio;
 		mcp2210_info("MCP2210_CMD_GET_PIN_DIR");
 		break;
 	case MCP2210_CMD_SET_PIN_DIR:
@@ -333,12 +334,18 @@ static int ctl_complete_urb(struct mcp2210_cmd *cmd_head)
 		mcp2210_info("MCP2210_CMD_SET_PIN_DIR");
 		break;
 	case MCP2210_CMD_GET_PIN_VALUE:
-		dev->s.chip_settings.gpio_value = le16_to_cpu(rep->body.gpio);
+		dev->s.chip_settings.gpio_value = rep->body.gpio;
 		mcp2210_info("MCP2210_CMD_GET_PIN_VALUE");
+		dev->s.last_poll_gpio = dev->eps[EP_IN].submit_time;
 		break;
 	case MCP2210_CMD_SET_PIN_VALUE:
 		dev->s.chip_settings.gpio_value = req->body.gpio;
 		mcp2210_info("MCP2210_CMD_SET_PIN_VALUE");
+		break;
+	case MCP2210_CMD_GET_INTERRUPTS:
+		dev->s.interrupt_event_counter = req->body.interrupt_event_counter;
+		mcp2210_info("MCP2210_CMD_GET_INTERRUPTS");
+		dev->s.last_poll_intr = jiffies;
 		break;
 
 	default:

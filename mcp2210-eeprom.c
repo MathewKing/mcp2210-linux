@@ -80,7 +80,7 @@ static int queue_eeprom_cmd(struct mcp2210_device *dev, u8 op, u8 addr,
 	//unsigned long irqflags;
 	int ret;
 
-	mcp2210_info("dev: %p, op: 0x%02hhx, addr: 0x%02hhx, size: 0x%02hhx",
+	mcp2210_debug("dev: %p, op: 0x%02hhx, addr: 0x%02hhx, size: 0x%02hhx",
 		     dev, op, addr, size);
 	if (!cmd)
 		return -ENOMEM;
@@ -102,7 +102,7 @@ static int queue_eeprom_cmd(struct mcp2210_device *dev, u8 op, u8 addr,
 
 //	dump_cmd_eeprom(KERN_WARNING, 0, "eeprom_cmd = ", &cmd->head);
 
-	ret = mcp2210_add_or_free_cmd(&cmd->head);
+	ret = mcp2210_add_cmd(&cmd->head, true);
 	if (!dev->cur_cmd)
 		process_commands(dev, GFP_ATOMIC, 0);
 
@@ -160,7 +160,7 @@ static int eeprom_submit_prepare(struct mcp2210_cmd *cmd_head)
 	u8 addr;
 	u8 value;
 
-	mcp2210_info();
+	mcp2210_debug();
 
 	if (dev->dead)
 		return -ESHUTDOWN;
@@ -195,10 +195,10 @@ static int eeprom_complete_urb(struct mcp2210_cmd *cmd_head)
 	struct mcp2210_msg *rep = dev->eps[EP_IN].buffer;
 	u8 addr = req->head.req.eeprom.addr;
 
-	mcp2210_info();
+	mcp2210_debug();
 	switch (req->cmd) {
 	case MCP2210_CMD_READ_EEPROM:
-		//mcp2210_info("read 0x%02hhx = ", addr, dev->eeprom_cache[addr]);
+		//mcp2210_debug("read 0x%02hhx = ", addr, dev->eeprom_cache[addr]);
 		dev->eeprom_cache[addr] = rep->head.rep.eeprom.value;
 
 		/* fall-through */
@@ -299,7 +299,7 @@ int mcp2210_eeprom_write(struct mcp2210_device *dev, const u8 *src, u8 addr,
 	int writes_in_progress = 0;
 	int ret;
 
-	mcp2210_info();
+	mcp2210_debug();
 
 	if (!dev || !src || !complete)
 		return -EINVAL;

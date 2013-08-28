@@ -127,7 +127,7 @@ static const struct mcp2210_board_config my_board_config = {
 				"motor driver with motion engine and SPI" */
 		}, {
 			.mode = MCP2210_PIN_GPIO,
-			.name = "unused"
+			.name = "unused%d"
 		}, {
 			.mode = MCP2210_PIN_DEDICATED,
 			.name = "SSPND"
@@ -157,10 +157,16 @@ static const struct mcp2210_board_config my_board_config = {
 			.name = "ADNS-9800",
 		}, {
 			.mode = MCP2210_PIN_UNUSED,
-			.name = "fried pin",
+			.name = "fried pin%d",
 		}
 	},
-	.strings_size = 0,
+	.poll_gpio	  = 1,
+	.poll_intr	  = 0,
+	.poll_gpio_usecs  = 50 * 1000,
+	.poll_intr_usecs  = 50 * 1000,
+	.stale_gpio_usecs = 50 * 1000,
+	.stale_intr_usecs = 50 * 1000,
+	.strings_size	  = 0,
 };
 
 #endif /* _SETTINGS_H */

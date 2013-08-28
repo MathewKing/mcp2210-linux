@@ -353,7 +353,7 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 	cmd->ctl_cmd = NULL;
 	*/
 
-	ret = mcp2210_add_or_free_cmd(&cmd->head);
+	ret = mcp2210_add_cmd(&cmd->head, true);
 	if (ret)
 		return ret;
 
