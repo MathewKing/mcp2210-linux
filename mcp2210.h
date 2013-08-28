@@ -558,7 +558,6 @@ struct mcp2210_cmd {
 	int status;
 	u8 mcp_status;
 	u8 state:2;
-	u8 kill:1;
 	u8 can_retry:1;
 	u8 delayed:1;
 	u8 nonatomic:1;

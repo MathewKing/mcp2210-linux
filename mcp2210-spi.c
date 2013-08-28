@@ -350,7 +350,6 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 	cmd->rx_pos = 0;
 	cmd->tx_bytes_in_process = 0;
 	cmd->xfer_settings_change = 0;
-	cmd->kill = 0;
 	cmd->ctl_cmd = NULL;
 	*/
 

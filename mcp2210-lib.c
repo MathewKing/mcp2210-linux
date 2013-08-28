@@ -1058,7 +1058,6 @@ void dump_cmd_head(const char *level, unsigned indent, const char *start, const 
 	       "%s  .status         = %d\n"
 	       "%s  .mcp_status     = 0x%02hhx\n"
 	       "%s  .state          = %u (%s)\n"
-	       "%s  .kill           = %u\n"
 	       "%s  .can_retry     = %d\n"
 	       "%s  .repeat_count   = %d\n"
 	       "%s  .complete       = %p\n"
@@ -1073,7 +1072,6 @@ void dump_cmd_head(const char *level, unsigned indent, const char *start, const 
 	       ind, cmd->status,
 	       ind, cmd->mcp_status,
 	       ind, cmd->state, "",
-	       ind, cmd->kill,
 	       ind, cmd->can_retry,
 	       ind, cmd->repeat_count,
 	       ind, cmd->complete,

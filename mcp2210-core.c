@@ -1433,7 +1433,6 @@ struct mcp2210_cmd *mcp2210_alloc_cmd(struct mcp2210_device *dev,
 	cmd->delay	= 0;
 	cmd->mcp_status		= 0;
 	cmd->state		= MCP2210_STATE_NEW;
-	cmd->kill		= 0;
 	cmd->can_retry		= 0;
 	cmd->nonatomic		= 0;
 	cmd->repeat_count	= 0;
