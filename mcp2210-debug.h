@@ -119,21 +119,22 @@ void dump_spi_device(
 	const char *level, unsigned indent, const char *start,
 	const struct spi_device *spi_dev);
 #else
-# define dump_dev		_dump_nothing
-# define dump_ep		_dump_nothing
-# define dump_cmd_head		_dump_nothing
-# define dump_cmd_ctl		_dump_nothing
-# define dump_cmd_spi		_dump_nothing
-# define dump_cmd_eeprom	_dump_nothing
-# define dump_spi_message	_dump_nothing
-# define dump_spi_transfer	_dump_nothing
-# define dump_spi_device	_dump_nothing
+# define dump_dev		_dump_nothing_void
+# define dump_ep		_dump_nothing_void
+# define dump_cmd_head		_dump_nothing_cmd
+# define dump_cmd_ctl		_dump_nothing_cmd
+# define dump_cmd_spi		_dump_nothing_cmd
+# define dump_cmd_eeprom	_dump_nothing_cmd
+# define dump_spi_message	_dump_nothing_void
+# define dump_spi_transfer	_dump_nothing_void
+# define dump_spi_device	_dump_nothing_void
 
-static inline void _dump_nothing(
+static inline void _dump_nothing_cmd(
 	const char *level, unsigned indent, const char *start,
-	const struct mcp2210_cmd *cmd_head)
-{
-}
+	const struct mcp2210_cmd *cmd_head){}
+static inline void _dump_nothing_void(
+	const char *level, unsigned indent, const char *start,
+	const void *cmd_head){}
 #endif
 
 static inline void print_mcp_msg(const char *level, const char *start,
