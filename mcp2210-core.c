@@ -1108,6 +1108,9 @@ static int complete_poll(struct mcp2210_cmd *cmd_head, void *context)
 	unsigned long interval;
 	unsigned long now = jiffies;
 
+	if (dev->dead)
+		return -EINPROGRESS;
+
 	if (cmd->req.cmd == MCP2210_CMD_GET_PIN_VALUE) {
 		enabled = dev->config->poll_gpio;
 		interval = dev->config->poll_gpio_usecs;
