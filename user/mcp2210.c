@@ -240,7 +240,7 @@ static inline u8 get_bool_param(const char *str)
  *
  */
 
-int get_input_data(void *dest, size_t size) {
+int get_input_data(void *dest, size_t size, int short_read_ok) {
 	const char *file_name = config.filein;
 	int use_stdin = !file_name || !strcmp(file_name, "-");
 	int fd;
@@ -259,7 +259,7 @@ int get_input_data(void *dest, size_t size) {
 	if (ret < 0) {
 		perror("read(): reading input");
 		ret = errno;
-	} else if ((size_t)ret != size) {
+	} else if ((size_t)ret != size && !short_read_ok) {
 		fprintf(stderr, "Short input: expected %lu bytes, got %ld.\n",
 			(unsigned long)size, (long)ret);
 		ret = -EOVERFLOW;
@@ -345,11 +345,73 @@ int get_config(int argc, char *argv[]) {
 		fatal_error("creek_encode");
 	}
 
+	ret = (ret + 7) / 8;
+
 	ret = put_output_data(buf, ret, 0);
+
+	if (ret > 0) {
+		fprintf(stderr, "wrote %d bytes\n", ret);
+		ret = 0;
+	}
 
 exit_free:
 	free(data);
 	return ret;
+}
+
+static int encode(int argc, char *argv[]) {
+	struct mcp2210_board_config *board_config;
+	u8 buf[0x100];
+	uint size;
+	int ret;
+
+	memset(buf, 0, sizeof(buf));
+	board_config = copy_board_config(NULL, &my_board_config, 0);
+	if (!board_config) {
+		errno = ENOMEM;
+		perror("copy_board_config");
+		goto exit_free;
+	}
+
+	ret = creek_encode(board_config, &my_chip_settings, buf, sizeof(buf));
+	if (ret < 0) {
+		errno = -ret;
+		perror("creek_encode");
+		goto exit_free;
+	}
+
+	size = (ret + 7) / 8;
+	fprintf(stderr, "encoded into %d bits (%u bytes)\n", ret, size);
+
+	ret = put_output_data(buf, size, 0);
+
+exit_free:
+	free(board_config);
+	return ret;
+}
+
+static int decode(int argc, char *argv[]) {
+	struct mcp2210_board_config *board_config;
+	u8 buf[0x100];
+	int ret;
+
+	ret = get_input_data(buf, sizeof(buf), 1);
+	if (ret < 0)
+		return ret;
+
+	board_config = creek_decode(&my_chip_settings, buf, (uint)ret, 0);
+	if (IS_ERR_VALUE(board_config)) {
+		ret = PTR_ERR(board_config);
+		fprintf(stderr, "decodeing creek config failed: ");
+		errno = -ret;
+		perror("creek_decode");
+		return 0;
+	}
+
+	dump_board_config(KERN_INFO, 0, "board_config = ", board_config);
+
+	free(board_config);
+	return 0;
 }
 
 enum settings_mask {
@@ -492,7 +554,7 @@ static int eeprom_read_write(int is_read, int argc, char *argv[]) {
 	eeprom->is_read = is_read;
 
 	if (!is_read) {
-		ret = get_input_data(eeprom->data, eeprom->size);
+		ret = get_input_data(eeprom->data, eeprom->size, 0);
 		if (ret != eeprom->size)
 			goto exit_free;
 	}
@@ -846,6 +908,14 @@ static const struct command command_list[] = {
 		.min_args = 1,
 		.sub_cmd  = sub_cmd_list_set,
 	}, {
+		.name	  = "encode",
+		.min_args = 1,
+		.func     = encode,
+	}, {
+		.name	  = "decode",
+		.min_args = 1,
+		.func     = decode,
+	}, {
 		.name	  = "eeprom",
 		.min_args = 1,
 		.sub_cmd  = sub_cmd_list_eeprom,
@@ -889,24 +959,29 @@ static void show_usage() {
 "  -3 --3wire      SDI/SDO signals shared (default disabled)\n"
 "\n"
 "Commands: (this section may be incomplete, incorrect, etc.)\n"
-"  get    config\n"
+"  get    config   Retrieve configuration from device.\n"
 "  set    config <mask>\n"
-"             Where mask specifies the information set(s) from settings.h\n"
-"             to upload to the device ORed together:\n"
-"                 1  current chip settings\n"
-"                 2  power-up chip settings\n"
-"                 4  current spi transfer settings\n"
-"                 8  power-up spi transfer settings\n"
-"                 16 key USB parameters\n"
-"                 32 board config (causes spi_master to be probed)\n"
+"                  Upload configuration to device.  The value of mask specifies\n"
+"                  the information set(s) from settings.h to upload to the\n"
+"                  device ORed together:\n"
+"                    1  current chip settings\n"
+"                    2  power-up chip settings\n"
+"                    4  current spi transfer settings\n"
+"                    8  power-up spi transfer settings\n"
+"                    16 key USB parameters\n"
+"                    32 board config (causes spi_master to be probed)\n"
 "\n"
-"  eeprom \n"
+"  encode          Encodes settings (in settings.h) into creek format.\n"
+"  decode          Decodes creek blob into settings and outputs to stderr. Note\n"
+"                  pin modes in settings.h must match.\n"
+"\n"
+"  eeprom          Reads from or writes to user-EEPROM area of device.\n"
 "         read  addr=n size=n\n"
 "         write addr=n size=n\n"
-"  test   \n"
+"  test            Runs a unit test\n"
 "         bitstream\n"
 "         config\n"
-"  msg    Send a raw message to the MCP2210 device.\n"
+"  msg             Send a raw message to the MCP2210 device.\n"
 "  spi \"<msg_string>\"\n"
 "             Send an SPI message to the spidev device (use -d to specify\n"
 "             device). A valid msg_string will consist of whitespace,\n"

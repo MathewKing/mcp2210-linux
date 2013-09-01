@@ -26,33 +26,40 @@
 
 static int compare_board_config(const struct mcp2210_board_config *a,
 				const struct mcp2210_board_config *b) {
-
 	uint i;
+
+	if (a->poll_gpio	!= b->poll_gpio)	return 1;
+	if (a->poll_intr	!= b->poll_intr)	return 2;
+	if (a->poll_gpio_usecs	!= b->poll_gpio_usecs)	return 3;
+	if (a->poll_intr_usecs	!= b->poll_intr_usecs)	return 4;
+	if (a->stale_gpio_usecs	!= b->stale_gpio_usecs)	return 5;
+	if (a->stale_intr_usecs	!= b->stale_intr_usecs)	return 6;
 
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		const struct mcp2210_pin_config *pa = &a->pins[i];
 		const struct mcp2210_pin_config *pb = &b->pins[i];
-		int ret = (int)i * 16;
+		uint desc = (i + 1) << 4;
 
-		if (pa->mode != pb->mode)
-			return ret + 1;
+		if (pa->mode != pb->mode && pb->mode != MCP2210_PIN_UNUSED
+					 && pa->mode != MCP2210_PIN_UNUSED)
+			return desc;
 
 		if (!!pa->name != !!pb->name)
-			return ret + 2;
+			return desc | 1;
 
 		if (pa->name && strcmp(pa->name, pb->name))
-			return ret + 3;
+			return desc | 2;
 
 		if (!!pa->modalias != !!pb->modalias)
-			return ret + 4;
+			return desc | 3;
 
 		if (pa->modalias && strcmp(pa->modalias, pb->modalias))
-			return ret + 5;
+			return desc | 4;
 
 		switch (pa->mode) {
 		case MCP2210_PIN_SPI:
 			if (memcmp(&pa->spi, &pb->spi, sizeof(pa->spi)))
-				return ret + 6;
+				return desc | 5;
 			break;
 
 		default:
@@ -60,7 +67,39 @@ static int compare_board_config(const struct mcp2210_board_config *a,
 		}
 	}
 
+
 	return 0;
+}
+
+static void print_failed_item(int val) {
+	const char *item;
+	uint section = val >> 4;
+
+	if (val < 16) {
+		switch (val) {
+		case 1: item = "poll_gpio"; break;
+		case 2: item = "poll_intr"; break;
+		case 3: item = "poll_gpio_usecs"; break;
+		case 4: item = "poll_intr_usecs"; break;
+		case 5: item = "stale_gpio_usecs"; break;
+		case 6: item = "stale_intr_usecs"; break;
+		default: item = "bad code"; break;
+		}
+		fprintf(stderr, "%s", item);
+	} else {
+		uint pin = section - 1;
+
+		switch (val & 0xf) {
+		case 0: item = "mode"; break;
+		case 1: item = "name presence"; break;
+		case 2: item = "name"; break;
+		case 3: item = "modalias presence"; break;
+		case 4: item = "modalias"; break;
+		case 5: item = "spi memcmp"; break;
+		default: item = "bad code"; break;
+		}
+		fprintf(stderr, "pin %u, %s", pin, item);
+	}
 }
 
 
@@ -92,7 +131,7 @@ int test_encoding(int argc, char *argv[]) {
 		perror("creek_encode");
 		goto exit_free;
 	}
-	fprintf(stderr, "encoded into %d bytes\n", ret);
+	fprintf(stderr, "encoded into %d bits (%d bytes)\n", ret, (ret + 7) / 8);
 
 	new_cfg = creek_decode(&my_chip_settings, buf, sizeof(buf), GFP_KERNEL);
 
@@ -107,9 +146,11 @@ int test_encoding(int argc, char *argv[]) {
 	dump_board_config(KERN_INFO, 0, "extra_crispy = ", new_cfg);
 
 	ret = compare_board_config(board_config, new_cfg);
-	if (ret)
-		fprintf(stderr, "They don't match: ret = %d\n", ret);
-	else
+	if (ret) {
+		fprintf(stderr, "They don't match: ");
+		print_failed_item(ret);
+		fputs("\n", stderr);
+	}else
 		fprintf(stderr, "Success\n");
 
 	free(new_cfg);

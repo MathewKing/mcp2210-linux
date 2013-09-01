@@ -138,22 +138,30 @@ When the driver probes, it queries the device for (among other things) its power
 
 For details on the encoding format, see the comments in [`mcp2210-creek.h`](mcp2210-creek#L29.h) (see also [`creek_encode`](mcp2210-lib.c#L467) and [`creek_decode`](mcp2210-lib.c#L277))
 
-Storing Auto-Configure Data
----------------------------
-All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L520) in `user/settings.h` is in the userspace utility program.  The current mechanism is klunky, but works as follows:
+Storing and Viewing Auto-Configure Data
+---------------------------------------
+All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L520) in `user/settings.h` is in the userspace utility program.
 
 1. Edit `user/settings.h` to your needs and recomple `mcp2210-util`
-2. Run the following command to manally configure (in volatile memory) the mcp2210, (as in the Configuring from Userland section)
+2. Run the following command to encode to config.dat:
+
 ```
-mcp2210-util set config 63
+mcp2210-util encode > config.dat
 ```
-3. Run the following command to generate the Creek-encoded image and save it as `config.dat`
-```
-mcp2210-util get config > config.dat
-```
-4. `ls -l config.dat` to determine its size
-5. Run the following command to store it to the user-EEPROM (replace size with the size of the file)
+
+3. `ls -l config.dat` to determine its size
+4. Run the following command to store it to the user-EEPROM (replace size with the size of the file)
+
 ```
 mcp2210-util eeprom write size=<size> addr=0 < config.dat
+```
+
+Decoding is the inverse.  However, the creek data doesn't include any data available in the "chip settings" (because this would be a redundant waste of space) so your chip settings in settings.h (or at least the pin modes) must match what was used when the encoding was generated.
+
+1. Make sure my_chip_settings in `user/settings.h` is correct.
+2. Run the following command:
+
+```
+mcp2210-util decode < config.dat
 ```
 
