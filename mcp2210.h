@@ -60,7 +60,7 @@ extern "C" {
 # define EXPORT_SYMBOL_GPL(symbol)
 # define le32_to_cpu(v)		(v)
 # define cpu_to_le32(v)		(v)
-# define printk printf
+# define printk(fmt, ...)	fprintf(stderr, fmt, ##__VA_ARGS__)
 # define KERN_ERR		""
 # define KERN_WARNING		""
 # define KERN_INFO		""

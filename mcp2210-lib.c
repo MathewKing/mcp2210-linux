@@ -269,6 +269,15 @@ error:
 	return ERR_PTR(-EPROTO);
 }
 
+#ifdef CONFIG_MCP2210_DEBUG
+static void creek_debug(const char *str, struct bit_creek *bs)
+{
+	printk(KERN_DEBUG "%s - %u\n", str, (uint)bs->pos);
+}
+#else
+# define creek_debug(a,b)
+#endif
+
 /**
  * mcp2210_board_config - read in and decode settings
  *
@@ -279,7 +288,7 @@ struct mcp2210_board_config *creek_decode(
 		const u8* src, size_t size, gfp_t gfp_flags)
 {
 	struct mcp2210_board_config *board_config = NULL;
-	struct mcp2210_pin_config *tmp_pins;
+	struct mcp2210_board_config *tmp;
 	struct creek_data dec;
 	struct bit_creek bs;
 	int ret = 0;
@@ -292,30 +301,34 @@ struct mcp2210_board_config *creek_decode(
 	bs.pos = 0;
 	bs.overflow = 0;
 
+	creek_debug("-------- creek_decode --------", &bs);
+
 	dec.magic[0] = creek_get_bits(&bs, 8);
 	dec.magic[1] = creek_get_bits(&bs, 8);
 	dec.magic[2] = creek_get_bits(&bs, 8);
 	dec.magic[3] = creek_get_bits(&bs, 8);
+	creek_debug("magic", &bs);
+
 	if (memcmp(dec.magic, CREEK_CONFIG_MAGIC, 4)) {
 		printk(KERN_WARNING "EEPROM magic doesn't match");
 		return ERR_PTR(-ENODEV);
 	}
 
 	dec.ver = creek_get_bits(&bs, 4);
+	creek_debug("version", &bs);
 
 	if (dec.ver != 0) {
 		printk(KERN_ERR "Creek version %hhu unsupported", dec.ver);
 		return ERR_PTR(-EPROTO);
 	}
 
-	BUILD_BUG_ON(sizeof(*tmp_pins) * MCP2210_NUM_PINS != sizeof(board_config->pins));
-	tmp_pins = kzalloc(sizeof(*tmp_pins) * MCP2210_NUM_PINS, gfp_flags);
-	if (!tmp_pins)
+	tmp = kzalloc(sizeof(*tmp), gfp_flags);
+	if (!tmp)
 		return ERR_PTR(-ENOMEM);
 
 	/* build settings */
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
-		struct mcp2210_pin_config *cfg = &tmp_pins[i];
+		struct mcp2210_pin_config *cfg = &tmp->pins[i];
 
 		cfg->mode = chip_settings->pin_mode[i];
 		if (cfg->mode & ~3) {
@@ -341,10 +354,39 @@ struct mcp2210_board_config *creek_decode(
 		dec.name_index[i]	= str_flags & 1 ? ++dec.str_count : 0;
 		dec.modalias_index[i]	= str_flags & 2 ? ++dec.str_count : 0;
 	}
+	creek_debug("strings present", &bs);
+
+	/* read gpio polling settings */
+	tmp->poll_gpio = creek_get_bits(&bs, 1);
+	if (tmp->poll_gpio) {
+		uint data	      = creek_get_bits(&bs, 13);
+		u32 interval	      = unpack_uint(data, 10, 3);
+		tmp->poll_gpio_usecs  = interval;
+		tmp->stale_gpio_usecs = unpack_uint_opt(&bs, 10, 3, interval);
+	}
+	creek_debug("gpio polling done", &bs);
+
+	/* read interrupt polling settings */
+	tmp->poll_intr = creek_get_bits(&bs, 1);
+	if (tmp->poll_intr) {
+		uint same_as_gpio = tmp->poll_gpio && creek_get_bits(&bs, 1);
+
+		if (same_as_gpio) {
+			tmp->poll_intr_usecs  = tmp->poll_gpio_usecs;
+			tmp->stale_intr_usecs = tmp->stale_gpio_usecs;
+		} else {
+			uint data	      = creek_get_bits(&bs, 13);
+			u32 interval	      = unpack_uint(data, 10, 3);
+			tmp->poll_intr_usecs  = interval;
+			tmp->stale_intr_usecs = unpack_uint_opt(&bs, 10, 3,
+								interval);
+		}
+	}
+	creek_debug("intr polling done", &bs);
 
 	for (i = 0; i < dec.spi_count; ++i) {
 		u8 pin = dec.spi_pin_num[i];
-		struct mcp2210_pin_config_spi *spi = &tmp_pins[pin].spi;
+		struct mcp2210_pin_config_spi *spi = &tmp->pins[pin].spi;
 
 		spi->max_speed_hz	   = unpack_uint_opt(&bs, 10, 2,
 							     MCP2210_MAX_SPEED);
@@ -356,6 +398,7 @@ struct mcp2210_board_config *creek_decode(
 		spi->last_byte_to_cs_delay = unpack_uint_opt(&bs, 7, 2, 0);
 		spi->delay_between_bytes   = unpack_uint_opt(&bs, 7, 2, 0);
 		spi->delay_between_xfers   = unpack_uint_opt(&bs, 7, 2, 0);
+		creek_debug("spi data", &bs);
 	}
 
 	/* record start of strings and find out how many bytes we need */
@@ -373,6 +416,7 @@ struct mcp2210_board_config *creek_decode(
 			goto exit_free;
 		}
 	}
+	creek_debug("strings", &bs);
 
 	if (bs.overflow) {
 		ret = -EPROTO;
@@ -385,13 +429,10 @@ struct mcp2210_board_config *creek_decode(
 				   + dec.str_size, GFP_KERNEL)))
 		return ERR_PTR(-ENOMEM);
 
+	/* copy temporary data and then free tmp */
+	memcpy(board_config, tmp, sizeof(*board_config));
+	kfree(tmp);
 	board_config->strings_size = dec.str_size;
-	/* copy chip settings */
-	//memcpy(&board_config->chip, chip_settings, sizeof(*chip_settings));
-
-	/* copy temporary pin data and then free tmp_pins */
-	memcpy(&board_config->pins, tmp_pins, sizeof(board_config->pins));
-	kfree(tmp_pins);
 
 	/* rewind bit stream and read strings */
 	bs.pos = strings_start;
@@ -415,6 +456,8 @@ struct mcp2210_board_config *creek_decode(
 			board_config->pins[i].modalias = dec.string_index[
 						dec.modalias_index[i] - 1];
 	}
+
+//	printk(KERN_DEBUG "creek_encode: used %u bits\n", bs.pos);
 
 exit_free:
 	kfree(dec.string_index);
@@ -473,15 +516,18 @@ int creek_encode(const struct mcp2210_board_config *src,
 	bs.pos = 0;
 	bs.overflow = 0;
 
+	creek_debug("-------- creek_encode --------", &bs);
 
 	/* magic */
 	creek_put_bits(&bs, CREEK_CONFIG_MAGIC[0], 8);
 	creek_put_bits(&bs, CREEK_CONFIG_MAGIC[1], 8);
 	creek_put_bits(&bs, CREEK_CONFIG_MAGIC[2], 8);
 	creek_put_bits(&bs, CREEK_CONFIG_MAGIC[3], 8);
+	creek_debug("magic", &bs);
 
 	/* version */
 	creek_put_bits(&bs, 0, 4);
+	creek_debug("version", &bs);
 
 	/* validate settings & write has_string header */
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
@@ -497,14 +543,43 @@ int creek_encode(const struct mcp2210_board_config *src,
 			return -EINVAL;
 		}
 
-		if (pin->mode == MCP2210_PIN_SPI) {
+		if (pin->mode == MCP2210_PIN_SPI)
 			data.spi_pin_num[data.spi_count++] = i;
-			break;
-		}
 
 		/* write "has strings" flags for name & modalias */
-		creek_put_bits(&bs, (!!pin->name) | (!!pin->modalias) * 2, 2);
+		creek_put_bits(&bs, (!!pin->name) | (!!pin->modalias) << 1, 2);
 	}
+	creek_debug("strings present", &bs);
+
+	/* write gpio polling settings */
+	creek_put_bits(&bs, src->poll_gpio, 1);
+	if (src->poll_gpio) {
+		u32 interval = src->poll_gpio_usecs;
+		uint data = pack_uint(interval, 10, 3);
+
+		creek_put_bits(&bs, data, 13);
+		pack_uint_opt(&bs, src->stale_gpio_usecs, 10, 3, interval);
+	}
+	creek_debug("gpio polling done", &bs);
+
+	/* write interrupt polling settings */
+	creek_put_bits(&bs, src->poll_intr, 1);
+	if (src->poll_intr) {
+		uint same_as_gpio = src->poll_gpio
+			&& src->poll_gpio_usecs  == src->poll_intr_usecs
+			&& src->stale_intr_usecs == src->stale_gpio_usecs;
+
+		creek_put_bits(&bs, same_as_gpio, 1);
+		if (!same_as_gpio) {
+			u32 interval = src->poll_intr_usecs;
+			uint data = pack_uint(interval, 10, 3);
+
+			creek_put_bits(&bs, data, 13);
+			pack_uint_opt(&bs, src->stale_intr_usecs, 10, 3,
+				      interval);
+		}
+	}
+	creek_debug("intr polling done", &bs);
 
 	/* write spi setting data */
 	for (i = 0; i < data.spi_count; ++i) {
@@ -520,21 +595,29 @@ int creek_encode(const struct mcp2210_board_config *src,
 		pack_uint_opt(&bs, spi->last_byte_to_cs_delay,	7, 2, 0);
 		pack_uint_opt(&bs, spi->delay_between_bytes,	7, 2, 0);
 		pack_uint_opt(&bs, spi->delay_between_xfers,	7, 2, 0);
+		creek_debug("spi data", &bs);
 	}
 
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		const struct mcp2210_pin_config *pin = &src->pins[i];
-		if (pin->name)
+		if (pin->name) {
 			put_encoded_string(&bs, pin->name);
+			creek_debug("name", &bs);
+		}
 
-		if (pin->modalias)
+		if (pin->modalias) {
 			put_encoded_string(&bs, pin->modalias);
+			creek_debug("modalias", &bs);
+		}
 	}
+	creek_debug("strings", &bs);
+
+	printk(KERN_DEBUG "creek_encode: used %u bits\n", (uint)bs.pos);
 
 	if (bs.overflow)
 		return -EOVERFLOW;
 
-	return (bs.pos + 7) / 8;
+	return bs.pos;
 }
 
 #ifdef __KERNEL__
