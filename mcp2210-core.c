@@ -863,13 +863,18 @@ void mcp2210_disconnect(struct usb_interface *intf)
 	printk("mcp2210_disconnect\n");
 
 	*((volatile int *)&dev->dead) = -ESHUTDOWN;
+	spin_lock_irqsave(&dev->dev_spinlock, irqflags);
 	cancel_delayed_work(&dev->delayed_work);
 	del_timer(&dev->timer);
+	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
 
 	/* unlink any URBs in route and wait for their completion handlers to be
 	 * called */
+	mcp2210_info("unlinking and killing all URBs...");
 	kill_urbs(dev, NULL);
 
+
+	mcp2210_info("emptying command queue...");
 	spin_lock_irqsave(&dev->queue_spinlock, irqflags);
 	while (!list_empty(&dev->cmd_queue)) {
 		struct mcp2210_cmd *cmd = list_first_entry(&dev->cmd_queue,
@@ -880,7 +885,9 @@ void mcp2210_disconnect(struct usb_interface *intf)
 		if (cmd->complete) {
 			cmd->status = -ESHUTDOWN;
 			spin_unlock(&dev->queue_spinlock);
+			mcp2210_debug("calling completion handler for %p", cmd);
 			ret = cmd->complete(cmd, cmd->context);
+			mcp2210_debug("done");
 			spin_lock(&dev->queue_spinlock);
 		} else
 			ret = 0;
