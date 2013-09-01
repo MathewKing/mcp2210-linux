@@ -180,7 +180,7 @@ static int do_gpio_cmd(struct mcp2210_device *dev, u8 cmd_code, void *body,
 	if (ret)
 		return ret;
 
-	process_commands(dev, GFP_KERNEL, 0);
+	process_commands(dev, false, true);
 
 	wait_for_completion(&c.completion);
 

@@ -22,36 +22,43 @@
  * TODO:
  * Incomplete list:
  * - major number from maintainer?
- * - add polling for gpio & dedicated interrupt pin
  * - honor cs_gpio and allow SPI where idle_cs == active_cs
+ * - missing mechanism to notify external entities of changes to gpio
  *
  * Fix list:
- * - re-implement device failure
+ * - While we wont see it on x86 & little-endian arm, the flipping
+ *   ctl_complete_urb() may be broken when processing data from the request
+ *   buffer.
+ * - Using the packed version of protocol structs is bloating code horribly,
+ *   even worse than I had guessed it would!! So we need to have packed and
+ *   unpacked versions of these structs replace the is_mcp_endianness and
+ *   "flipping" functionality with conversions from packed (protocol-correct)
+ *   little-endian structs to unpacked native-endianness structs.
  * - When a command dies and can't be retried, we need to do something more
- *   than just log it.
- * - change ioctl to netlink
+ *   than just log it. Re-implement device failure?
+ * - Change ioctl to netlink.
  * - ioctl interface not friendly with ABIs where kernel & user space have
- *   different sized ptrs (x32, etc.) (I say fix this when we convert to
- *   netlink)
+ *   different sized ptrs (x32, sparc64, etc.) (Maybe fix this when we convert
+ *   to netlink)
  * - obey struct spi_transfer cs_change
  *
  * Tweak list:
- * - change "flipping" to go from endianness change to moving the data to an
- *   unpacked struct because using these packed everywhere really seems to
- *   bloat some code.
- * - examine locking and refine
+ * - examine locking and possibly refine
  * - better prediction of how long SPI transfers will take and appropriate
- *   scheduling so that we don't unneccessarily request a status (update: this
+ *   scheduling so that we don't unnecessarily request a status (update: this
  *   has some stuff now, but it may need an audit)
  * - include/linux/spi/spi.h: extend mode (to u16), spi_device, et. al. to
- *   accomodate missing features (timing, drop cs bewteen words, etc.)
+ *   accommodative missing features (timing, drop cs between words, etc.) (note
+ *   current work with DUAL and QUAD on linux-spi)
  *   - update spidev driver & userspace to support
  *   - update mcp2210 driver to use them.
  *
- * Home page:
- *	https://www.microchip.com/wwwproducts/Devices.aspx?dDocName=en556614
+ * @file
+ *
+ * Product page:
+ *    https://www.microchip.com/wwwproducts/Devices.aspx?dDocName=en556614
  * Datasheet:
- *	https://www.microchip.com/downloads/en/DeviceDoc/22288A.pdf
+ *    https://www.microchip.com/downloads/en/DeviceDoc/22288A.pdf
  *
  * Background:
  *
@@ -67,41 +74,90 @@
  *
  * - Extensive overhead: hid-core driver -> usbhid driver -> (hid-generic
  *   driver) -> libusb -> hidapi -> MCP2210-Library means lots of memory & CPU.
- *   (Note however that hid-generic is virtually non-existent)
- * - No way to use SPI protocol drivers to manage periphials on the other side
+ *   (Note however that hid-generic is virtually non-existent.) Additionally,
+ *   an embedded system will have to enable the input and HID layers that it
+ *   otherwise may not require.
+ * - No way to use SPI protocol drivers to manage peripherals on the other side
  *   of the MCP2210.
  * - No mechanism for auto-configuration outside of userland.
  *
  * This driver attempts to solve these shortcomings by eliminating all of these
- * layers, including hid-core, communicating with the MCP2210 directly via
- * interrupt URBs and allowing your choice of spi protocol driver for each SPI
- * device, with the standard option of spidev for interating with the SPI device
- * from userspace.  In addition, it supplies an (optional) auto-configuration
- * scheme which utilizes the devices 256 bytes of user EEPROM to store the wiring
- * information for the board and a fairly complete ioctl interface for userland
- * configuration, testing and such.
+ * layers, including the kernel's input, hid, hid-core, usbhid, etc.,
+ * communicating with the MCP2210 directly via interrupt URBs and allowing your
+ * choice of spi protocol driver for each SPI device, with the standard option
+ * of spidev for interacting with the SPI device from userspace.  In addition,
+ * it supplies an (optional) auto-configuration * scheme which utilizes the
+ * devices 256 bytes of user EEPROM to store the wiring * information for the
+ * board and a fairly complete ioctl interface for userland * configuration,
+ * testing and such.
  *
- * Theory of operation:
+ * Theory of Operation:
+ * ===================
  *
- * The MCP2210 driver is a USB interface driver with a command queue.  Some
- * commands are auto-queued when the driver probes, the rest are received via
- * ioctls and the spi_master interface. Each command represents a logically
- * atomic operation and typically exchanges at least one message with the
- * device.  Commands are represented by structs that derive from struct
- * mcp2210_cmd via psudo-inheritence, embedding a struct mcp2210_cmd object as
- * its first member and using a type field to specify the command type.  There
- * are also general-purpose commands with a NULL type (and no "sub-type", they
- * are just a struct mcp2210_cmd object) that only exist to defer some work
- * until later.
+ * Commands and The Command Queue
+ * ------------------------------
+ * The MCP2210 driver is a queue-driven USB interface driver. All commands are
+ * executed (or given the opportunity) serially, in FIFO order.  Only one
+ * command may execute at a time. Each command represents a logically atomic
+ * operation (e.g., send SPI transfer or query settings) and (typically)
+ * exchanges at least one message with the device via via interrupt URBs.
  *
- * Each of the (normal) command types are implemented in either mcp2210-spi.c,
- * mcp2210-ctl.c or mcp2210-eeprom.c for spi messages, control/query commands
- * and eeprom access, respectively and their types are defined in mcp2210.h.
+ * Commands are objects of either struct mcp2210_cmd or a derived-type using
+ * pseudo-inheritance -- embedding a struct mcp2210_cmd object as its first
+ * member and using a type field to specify the command type. There are three
+ * different types of "normal" commands that interact with the device directly.
+ * Each populate the cmd->type with a pointer to an appropriate struct
+ * mcp2210_cmd_type object:
+ *
+ * 1. Transfer SPI messages (mcp2210-spi.c)
+ * 2. Read/write to/from the device's user-EEPROM area (mcp2210-eeprom.c)
+ * 3. Query and change settings (mcp2210-ctl.c)
+ *
+ * General-purpose commands have have a NULL command type, but will populate
+ * cmd->complete and cmd->context to defer some work, possibly to execute in a
+ * non-atomic context.  Currently, these are only used to probe spi and gpio,
+ * neither of which can be probed at the time the USB interface is probed
+ * because the information to do so is not yet available. This occurs either
+ * when the user- EEPROM area has been read and decoded (when
+ * CONFIG_MCP2210_CREEK is enabled) or when the configure ioctl command is
+ * called from userspace.
+ *
+ * Delayed & Non-Atomic Commands
+ * -----------------------------
+ * Due to the nature of the device, having:
+ *
+ * 1. a single USB interface,
+ * 2. potentially multiple SPI peripherals connected to it,
+ * 3. the need to poll its gpio values & interrupt counter, and
+ * 4. late arrival of wiring information to perform a complete probe (with SPI
+ *    & GPIO),
+ *
+ * the driver requires a slightly more sophisticated mechanism for processing
+ * commands than a simple FIFO queue processed by URB completion handlers.
+ * Polling commands need to be delayed. SPI Transfers (especially on slower
+ * chips) often need to have delays between URBs to give the device time to
+ * complete transfers to the chip. Performing the configure (probing spi_master
+ * and gpio_chip) must occur in a context that can sleep. If a command needs to
+ * be delayed, its cmd->delayed bit is set and cmd->delay_until will specify a
+ * time (in jiffies) that the command is to run at. If the command must be able
+ * to sleep, it's cmd->nonatomic bit will be set.
+ *
+ * Note that there is no mechanism (at this time) to assure that a delayed
+ * command will execute at its requested time, although it is guaranteed not
+ * to execute prior to it. Delayed commands who's cmd->delay_until time has
+ * been reached still have to wait their turn in the queue to be eligible for
+ * execution. If a delayed command is popped from the queue but its
+ * cmd->delay_until time has not yet arrived, it is moved to the
+ * dev->delayed_list and an appropriate mechanism (either timer or
+ * delayed_work) is set to pick it up.  If another command is executing when
+ * the timer expires or delayed_work runs, the delayed command is (effectively)
+ * moved to the head of the queue and will execute next.
  *
  * process_commands():
+ * ------------------
  * Messages in the queue are processed via process_commands(). If dev->cur_cmd
  * is NULL, it will attempt to retrieve a command from the queue, marking its
- * state as new. How it processes commmands differs between "normal" commands
+ * state as new. How it processes commands differs between "normal" commands
  * (which interact with the MCP2210) and general-purpose commands (which are
  * simply some delayed work)
  *
@@ -117,20 +173,19 @@
  * -- General-Purpose Commands
  * For general-purpose commands, submit/complete_urbs() is bypassed and it is
  * instead immediately marked as completed having its complete() function
- * called.
+ * called, allowing any arbitrary work to be performed.
  *
  * -- Deferred Work
  * A command may be deferred because:
- * a. It needs to wait before running (giving the device time to be ready) or
- * b. It needs to run in a non-atomic state.
- *
- * In either of these cases, process_commands() will instead request that the
- * delayed_work execute the command and reschedule it to run when needed.
+ * a. it needs to wait before starting,
+ * c. it needs to run again, but needs to wait before doing so, or
+ * b. it needs to run in a non-atomic state.
  *
  * submit_urbs():
+ * -------------
  * This function will first call the command type's submit_prepare() function,
  * which should perform any needed initialization, populate the 64-byte request
- * message and return non-zero unless it has an error. (There are actually two
+ * message and return non-zero unless it has an error. However, there are two
  * exceptions to this: submit_prepare() may return -ERESTARTSYS to have the
  * command deleted w/o further processing or -EAGAIN to have the message
  * restarted and submit_urbs() called again). It will then submit the URBS and
@@ -626,6 +681,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	dev->udev = udev;
 	kref_init(&dev->kref);
 	INIT_LIST_HEAD(&dev->cmd_queue);
+	INIT_LIST_HEAD(&dev->delayed_list);
 	spin_lock_init(&dev->dev_spinlock);
 	spin_lock_init(&dev->queue_spinlock);
 #ifdef CONFIG_MCP2210_EEPROM
@@ -721,7 +777,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	schedule_delayed_work(&dev->delayed_work, msecs_to_jiffies(1000));
 
 	/* Submit the first command's URB */
-	ret = process_commands(dev, GFP_KERNEL, 0);
+	ret = process_commands(dev, false, true);
 
 	if (ret < 0)
 		goto error2;
@@ -840,7 +896,7 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 	}
 
 	if (!dev->cur_cmd)
-		process_commands(dev, GFP_KERNEL, 0);
+		process_commands(dev, false, true);
 
 	usb_autopm_put_interface(dev->intf);
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
@@ -928,25 +984,76 @@ static inline int u16_get_bit(unsigned bit, u16 raw)
 	return 1 & (raw << bit);
 }
 
-/*__must_hold */
-/* TODO: can this ever benefit from sleeping? */
-int process_commands(struct mcp2210_device *dev, gfp_t gfp_flags,
-		     const int lock_held)
+/*
+ * Moves delayed commands that are due to the head of the queue and returns the
+ * delayed command that will be due next, or NULL if there are no (more)
+ * delayed commands in the list
+ */
+static void process_delayed_list(struct mcp2210_device *dev)
+{
+	struct mcp2210_cmd *cmd;
+	struct mcp2210_cmd *n;
+	struct mcp2210_cmd *next = NULL;
+	unsigned long now;
+
+	mcp2210_debug();
+
+	if (list_empty(&dev->delayed_list))
+		goto done;
+
+	now = jiffies;
+
+	list_for_each_entry_safe(cmd, n, &dev->delayed_list, node) {
+		/* if due, move to head of queue and clear delayed flag */
+		if (time_after_eq(now, cmd->delay_until)) {
+			list_del(&cmd->node);
+			list_add(&cmd->node, &dev->cmd_queue);
+			cmd->delayed = 0;
+
+		/* of those remaining, determine which is due the soonest */
+		} else if (!next || time_before(cmd->delay_until,
+					       next->delay_until))
+			next = cmd;
+	}
+
+done:
+	dev->delayed_cmd = next;
+	mcp2210_debug("next = %p", next);
+}
+
+/* must hold dev_spinlock */
+static void delay_cur_cmd(struct mcp2210_device *dev)
+{
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&dev->queue_spinlock, irqflags);
+	list_add_tail(&dev->cur_cmd->node, &dev->delayed_list);
+	process_delayed_list(dev);
+	spin_unlock_irqrestore(&dev->queue_spinlock, irqflags);
+	dev->cur_cmd = NULL;
+}
+
+int process_commands(struct mcp2210_device *dev, const bool lock_held, const bool can_sleep)
 {
 	unsigned long irqflags = irqflags;
-	unsigned long now = jiffies;
 	struct mcp2210_cmd *cmd;
 	int ret = 0;
 
 	mcp2210_info();
 
-	if (dev->dead)
-		return -ESHUTDOWN;
+	/* you can't say that we can sleep if you call this func while holding
+	 * dev_spinlock, although you can call w/o lock_held, and can_sleep = false */
+	BUG_ON(lock_held && can_sleep);
 
 	if (!lock_held)
 		spin_lock_irqsave(&dev->dev_spinlock, irqflags);
 
 restart:
+	if (dev->dead) {
+		ret = -ESHUTDOWN;
+		goto exit_unlock;
+	}
+
 	/* use a local for brevity */
 	cmd = dev->cur_cmd;
 
@@ -956,9 +1063,10 @@ restart:
 
 		if (cmd->complete) {
 			if (cmd->nonatomic) {
-				if (lock_held)
-					goto defer_nonatomic;
-
+				/* this should now be taken care of after
+				 * picking up the comand, so should never
+				 * happen */
+				BUG_ON(!can_sleep);
 				spin_unlock_irqrestore(&dev->dev_spinlock,
 						       irqflags);
 			}
@@ -971,40 +1079,35 @@ restart:
 
 		dev->cur_cmd = NULL;
 
-		/* a completion handler that returns -EINPROGRESS will free the
-		 * cmd later
+		/* a completion handler that returns -EINPROGRESS will either
+		 * free the cmd later or for commands that shouldn't be freed
 		 */
 		if (ret != -EINPROGRESS) {
 			mcp2210_info("freeing cur_cmd\n");
-			kfree(cmd);								}
+			kfree(cmd);
+		}
+	}
+
+	cmd = dev->cur_cmd;
+
+	/* If we have are waiting on a delayed command that is preemptable,
+	 * let's clear it and see if we can get a command that we can execute
+	 * now */
+	if (cmd && cmd->delayed && time_after(cmd->delay_until, jiffies)) {
+		dev->cur_cmd = NULL;
 	}
 
 	/* fetch a command, if needed */
 	if (!dev->cur_cmd) {
-
 		spin_lock(&dev->queue_spinlock);
 
-		/* first iterate through the list and pick out any delayed
-		 * commands that are due */
-		list_for_each_entry(cmd, &dev->cmd_queue, node) {
-			if (cmd->delayed)
-				continue;
+		process_delayed_list(dev);
 
-			if (jiffdiff(cmd->delay_until, now) >= 0) {
-				dev->cur_cmd = cmd;
-				mcp2210_debug("found this here command...");
-				goto got_a_command;
-			}
-		}
-
-		/* if none found, pop the front */
 		if (!list_empty(&dev->cmd_queue)) {
 			unsigned i;
-			dev->cur_cmd = list_first_entry(&dev->cmd_queue,
-							struct mcp2210_cmd,
-							node);
-got_a_command:
-			list_del(&dev->cur_cmd->node);
+
+			dev->cur_cmd = list_entry(dev->cmd_queue.next, struct mcp2210_cmd, node);
+			list_del(dev->cmd_queue.next);
 			dev->cur_cmd->time_started = jiffies;
 
 			for (i = 0; i < 2; ++i) {
@@ -1014,11 +1117,10 @@ got_a_command:
 		}
 
 		spin_unlock(&dev->queue_spinlock);
+
 		/* If queue was empty then we're done */
-		if (!dev->cur_cmd) {
-			mcp2210_debug("nothing to do");
-			goto exit_unlock;
-		}
+		if (!dev->cur_cmd)
+			goto queue_empty;
 	}
 
 	cmd = dev->cur_cmd;
@@ -1040,21 +1142,23 @@ got_a_command:
 					     "for aprx. %ums",
 					     cmd->nonatomic ? "non-" : "",
 					     jiffies_to_msecs(diff));
-				if (cmd->nonatomic)
-					reschedule_delayed_work(dev, diff);
-				else if (!timer_pending(&dev->timer) || time_after(dev->timer.expires, cmd->delay_until))
-					mod_timer(&dev->timer, cmd->delay_until);
-
-				goto exit_unlock;
+				delay_cur_cmd(dev);
+				goto restart;
 			}
 
 			/* otherwise, it is now due */
 			cmd->delayed = 0;
 		}
 
-		if (unlikely(cmd->nonatomic) && lock_held)
-			goto defer_nonatomic;
+		/* defer non-atomic commands if we can't sleep */
+		if (unlikely(cmd->nonatomic) && !can_sleep) {
+			mcp2210_info("deferring execution");
+			reschedule_delayed_work(dev, 0);
+			goto exit_unlock;
+		}
 
+		/* mark general-purpose commands complete immediately and call
+		 * completion handler. */
 		if (!cmd->type) {
 			cmd->state = MCP2210_STATE_COMPLETE;
 			goto restart;
@@ -1079,8 +1183,7 @@ got_a_command:
 					"the dead URBs\n", ret);
 				mcp2210_dump_urbs(dev, KERN_ERR, 3);
 
-				/* FIXME: how do we handle this request now? */
-				/* dump it to printk and then remove it */
+				/* FIXME: do better than just dumping the command & removing it */
 
 				// fail_device(dev, ret);
 				// goto exit_unlock;
@@ -1101,10 +1204,25 @@ exit_unlock:
 
 	return ret;
 
-defer_nonatomic:
-	mcp2210_info("deferring execution");
-	reschedule_delayed_work(dev, 0);
+queue_empty:
+	mcp2210_debug("nothing to do");
+
+	cmd = dev->delayed_cmd;
+	if (cmd) {
+		if (cmd->nonatomic) {
+			long delay = jiffdiff(jiffies, cmd->delay_until);
+
+			/* we better code for that unlikely scenario that could
+			 * really fuck things up */
+			if (unlikely(delay < 0))
+				delay = 0;
+			reschedule_delayed_work(dev, (unsigned long)delay);
+		} else
+			mod_timer(&dev->timer, cmd->delay_until);
+//		else if (!timer_pending(&dev->timer) || time_after(dev->timer.expires, cmd->delay_until))
+	}
 	goto exit_unlock;
+
 }
 
 static int complete_poll(struct mcp2210_cmd *cmd_head, void *context)
@@ -1255,6 +1373,8 @@ static int unlink_urbs(struct mcp2210_device *dev)
 
 		ep->kill = 1;
 
+		mcp2210_debug("ep->is_dir_in = %d", ep->is_dir_in);
+
 		if(!atomic_dec_and_test(&ep->unlink_in_process)) {
 			mcp2210_crit("fuck");
 			BUG();
@@ -1318,85 +1438,12 @@ __cold noinline static void fail_command(struct mcp2210_device *dev, int error,
 	}
 }
 
-/*
- * Returns:
- * - 0 if there was nothing to do or there is a non-atomic command but
- *   can_sleep was zero,
- * - -1 if a command was executed, or
- * - a positive number of jiffies if there is a delayed/deferred command that
- *   needs to be executed, but is not yet due
- */
-static unsigned long do_deferred_cmd(struct mcp2210_device *dev, int can_sleep)
-{
-	struct mcp2210_cmd *cmd;
-	unsigned long irqflags;
-	long ret = 0;
-
-	spin_lock_irqsave(&dev->dev_spinlock, irqflags);
-	cmd = dev->cur_cmd;
-
-	/* This function is called from two different contexts, a soft-interrupt
-	 * timer and a delayed_work. A race conditions should be impossible
-	 * here because
-	 * o If called from soft-irq, can_sleep is zero, so a non-atomic command
-	 *   is ignored
-	 * o If it's delayed work, we clear the delayed flag prior to releasing
-	 *   the lock.
-	 *
-	 * One other possibly alarming execution path can occur, but is safe
-	 * o the delayed_work calls for a non-atomic command
-	 * o dev_spinlock is released and process_commands is called
-	 * o the soft-irq runs
-	 *
-	 * This path is safe because dev->cur_cmd is never changed when
-	 * dev_spinlock is not held, nor is cmd->nonatomic ever cleared.  Thus,
-	 * the soft-irq call will always do nothing.
-	 */
-	if (cmd && (cmd->delayed || cmd->nonatomic)) {
-		if (!can_sleep && cmd->nonatomic) {
-			/* can't execute this job */
-			goto exit_unlock;
-		}
-
-		if (cmd->delayed) {
-			long diff = jiffdiff(cmd->delay_until, jiffies);
-
-			if (diff > 0) {
-				ret = diff;
-				goto exit_unlock;
-			}
-			cmd->delayed = 0;
-		}
-
-		if (cmd->nonatomic) {
-			mcp2210_debug("starting nonatomic execution...");
-			spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
-			process_commands(dev, GFP_KERNEL, 0);
-			spin_lock_irqsave(&dev->dev_spinlock, irqflags);
-		} else {
-			mcp2210_debug("starting delayed execution...");
-			process_commands(dev, GFP_ATOMIC, 1);
-		}
-
-		ret = -1;
-	}
-
-exit_unlock:
-	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
-	return ret;
-}
-
 static void timer_callback(unsigned long context)
 {
 	struct mcp2210_device *dev = (void*)context;
-	long ret;
 
 	mcp2210_debug();
-
-	ret = do_deferred_cmd(dev, 0);
-	if (ret > 0) {
-		/* TODO: reschedule timer */
-	}
+	process_commands(dev, false, false);
 }
 
 /* work queue callback to take care of hung URBs and other misc bottom half
@@ -1414,11 +1461,9 @@ static void delayed_work_callback(struct work_struct *work)
 						  delayed_work);
 	struct mcp2210_cmd *cmd;
 	unsigned long irqflags;
-	long next_work = (long)msecs_to_jiffies(4000);
 	struct mcp2210_endpoint *ep;
 	unsigned long start_time = jiffies;
 	int ret;
-	long lret;
 
 	/* static const */ long TIMEOUT_URB = msecs_to_jiffies(750) + 1;
 	/* static const */ long TIMEOUT_HUNG = msecs_to_jiffies(8000);
@@ -1463,24 +1508,22 @@ static void delayed_work_callback(struct work_struct *work)
 
 	/* run any deferred work that is now due */
 	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
-	lret = do_deferred_cmd(dev, 1);
+	process_commands(dev, false, true);
 	spin_lock_irqsave(&dev->dev_spinlock, irqflags);
-
-	if (lret == -1)
-		goto exit_reschedule;
-	else if (lret > 0 && cmd->nonatomic)
-		next_work = lret;
 
 	/* check for stalled URBs */
 	for (ep = dev->eps; ep != &dev->eps[2]; ++ep) {
 		// validate  cmd / ep states
 		long age = jiffdiff(start_time, ep->submit_time);
 
+		if (ep->state == MCP2210_STATE_NEW)
+			continue;
+
 		mcp2210_info("  %s URB in state %d is %d mS old",
 			     urb_dir_str[ep->is_dir_in], ep->state,
 			     jiffies_to_msecs(age));
 
-		if (likely(ep->state == MCP2210_STATE_SUBMITTED)) {
+		if (ep->state == MCP2210_STATE_SUBMITTED) {
 			/* this is the state we'll normally see if dev->cur_cmd is not
 			 * null.  Make sure the command hasn't timed out and then
 			 * exit. */
@@ -1496,7 +1539,7 @@ static void delayed_work_callback(struct work_struct *work)
 				ret = unlink_urbs(dev);
 				goto exit_reschedule;
 			}
-		} else if (age > TIMEOUT_HUNG) {
+		} else if (unlikely(age > TIMEOUT_HUNG)) {
 			mcp2210_err("Command timed-out (age = %ld, TIMEOUT_HUNG = %ld)", age, TIMEOUT_HUNG);
 			fail_command(dev, -EIO, 0, false);
 			goto exit_reschedule;
@@ -1504,9 +1547,10 @@ static void delayed_work_callback(struct work_struct *work)
 	}
 
 exit_reschedule:
-	BUG_ON(next_work < 0);
-	if (!dev->dead)
-		schedule_delayed_work(&dev->delayed_work, (unsigned long)next_work);
+	/* reschedule as long as the device isn't dead and the delayed_work
+	 * wasn't already re-armed by process_commands() */
+	if (!dev->dead && !timer_pending(&dev->delayed_work.timer))
+		schedule_delayed_work(&dev->delayed_work, msecs_to_jiffies(4000));
 
 exit_unlock_dev:
 #ifdef CONFIG_MCP2210_DEBUG
@@ -1859,7 +1903,7 @@ restart:
 //		cmd->complete(cmd, cmd->context);
 
 process_commands:
-	process_commands(dev, GFP_ATOMIC, 1);
+	process_commands(dev, true, false);
 
 exit_unlock:
 	/* FIXME: more crap */
@@ -1939,4 +1983,3 @@ static int submit_urbs(struct mcp2210_cmd *cmd, gfp_t gfp_flags)
 
 	return ret;
 }
-

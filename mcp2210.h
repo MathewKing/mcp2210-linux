@@ -551,6 +551,7 @@ typedef int (*mcp2210_complete_t)(struct mcp2210_cmd *cmd, void *context);
  * @type:		The type of command or NULL if this is a general-
  * 			purpose (non-USB transaction) command that will execute
  * 			when it complete() is called.
+ * @node:		private
  * @time_queued:	Time (in jiffies) comand was queued
  * @time_started:	Time (in jiffies) comand processing began
  * @delay_until:	Time (in jiffies) this command should be executed
@@ -703,6 +704,8 @@ struct mcp2210_device {
 
 	struct list_head cmd_queue;
 	struct mcp2210_cmd *cur_cmd;
+	struct list_head delayed_list;
+	struct mcp2210_cmd *delayed_cmd;
 	struct mcp2210_endpoint eps[2];
 
 	struct delayed_work delayed_work;
@@ -742,8 +745,7 @@ struct mcp2210_cmd *mcp2210_alloc_cmd(struct mcp2210_device *dev,
 				      const struct mcp2210_cmd_type *type,
 				      size_t size, gfp_t gfp_flags);
 int mcp2210_add_cmd(struct mcp2210_cmd *cmd, bool free_if_dead);
-int process_commands(struct mcp2210_device *dev, gfp_t gfp_flags,
-		     const int lock_held);
+int process_commands(struct mcp2210_device *dev, const bool lock_held, const bool can_sleep);
 int mcp2210_set_pin_config(struct mcp2210_device *dev, unsigned pin,
 			   const struct mcp2210_pin_config *config);
 int mcp2210_configure(struct mcp2210_device *dev,

@@ -279,7 +279,7 @@ static int mcp2210_spi_setup(struct spi_device *spi)
 }
 
 static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
-		     gfp_t gfp_flags)
+		     bool can_sleep)
 {
 	u8 pin = msg->spi->chip_select;
 	struct mcp2210_cmd_spi_msg *cmd;
@@ -288,6 +288,7 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 	struct spi_transfer *first_xfer = list_entry(msg->transfers.next,
 						     struct spi_transfer,
 						     transfer_list);
+	gfp_t gfp_flags = can_sleep ? GFP_KERNEL : GFP_ATOMIC;
 	int ret;
 
 	mcp2210_info("Start new transfer (pin %d)\n", pin);
@@ -340,6 +341,7 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 	if (!cmd)
 		return -ENOMEM;
 
+	cmd->head.can_retry = 1;
 	cmd->head.complete = spi_complete_cmd;
 	cmd->head.context = NULL;
 	cmd->spi = msg->spi;
@@ -357,14 +359,14 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 	if (ret)
 		return ret;
 
-	return process_commands(dev, gfp_flags, 0);
+	return process_commands(dev, false, can_sleep);
 }
 
 #ifndef USE_SPI_QUEUE
 /* will not sleep */
 static int transfer(struct spi_device *spi, struct spi_message *msg)
 {
-	return queue_msg(mcp2210_spi2dev(spi), msg, GFP_ATOMIC);
+	return queue_msg(mcp2210_spi2dev(spi), msg, false);
 }
 
 #else
@@ -381,7 +383,7 @@ static int prepare_transfer_hardware(struct spi_master *master)
 static int transfer_one_message(struct spi_master *master,
 				struct spi_message *msg)
 {
-	return queue_msg(mcp2210_spi_master2dev(master), msg, GFP_KERNEL);
+	return queue_msg(mcp2210_spi_master2dev(master), msg, true);
 }
 
 static int unprepare_transfer_hardware(struct spi_master *master)

@@ -538,7 +538,7 @@ static long mcp2210_ioctl_config_set(struct mcp2210_device *dev, struct ioctl_re
 
 	spin_unlock(&dev->queue_spinlock);
 	if (!ret)
-		process_commands(dev, GFP_ATOMIC, 1);
+		process_commands(dev, true, false);
 	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
 
 	/* help command execute more quickly? */

@@ -104,7 +104,7 @@ static int queue_eeprom_cmd(struct mcp2210_device *dev, u8 op, u8 addr,
 
 	ret = mcp2210_add_cmd(&cmd->head, true);
 	if (!dev->cur_cmd)
-		process_commands(dev, GFP_ATOMIC, 0);
+		process_commands(dev, false, gfp_flags == GFP_KERNEL);
 
 	return ret;
 }
