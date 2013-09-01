@@ -964,10 +964,20 @@ void dump_state(const char *level, unsigned indent, const char *start,
 
 	printk("%s%s.cur_spi_config              = %d\n"
 	       "%s.idle_cs                     = 0x%04hx\n"
-	       "%s.active_cs                   = 0x%04hx\n",
+	       "%s.active_cs                   = 0x%04hx\n"
+	       "%s.spi_delay_per_kb            = %lu\n"
+	       "%s.last_poll_gpio              = %lu\n"
+	       "%s.last_poll_intr              = %lu\n"
+	       "%s.interrupt_event_counter     = 0x%04hx\n"
+	       "%s}\n",
 	       level, ind, s->cur_spi_config,
 	       ind, s->idle_cs,
-	       ind, s->active_cs);
+	       ind, s->active_cs,
+	       ind, s->spi_delay_per_kb,
+	       ind, s->last_poll_gpio,
+	       ind, s->last_poll_intr,
+	       ind, s->interrupt_event_counter,
+	       ind);
 }
 
 void dump_pin_config(const char *level, unsigned indent, const char *start,
@@ -1031,11 +1041,23 @@ void dump_board_config(const char *level, unsigned indent, const char *start,
 		dump_pin_config(level, indent + 4, buf, &bc->pins[i]);
 	}
 
-	printk("%s%s}"
-	       "%s.strings_size = %u"
-	       "%s.strings      = %p \"%s\"\n"
+	printk("%s%s}\n"
+	       "%s.poll_gpio        = %hhu\n"
+	       "%s.poll_intr        = %hhu\n"
+	       "%s.poll_gpio_usecs  = %u\n"
+	       "%s.poll_intr_usecs  = %u\n"
+	       "%s.stale_gpio_usecs = %u\n"
+	       "%s.stale_intr_usecs = %u\n"
+	       "%s.strings_size     = %u\n"
+	       "%s.strings          = %p \"%s\"\n"
 	       "%s}\n",
 	       level, ind,
+	       ind, bc->poll_gpio,
+	       ind, bc->poll_intr,
+	       ind, (uint)bc->poll_gpio_usecs,
+	       ind, (uint)bc->poll_intr_usecs,
+	       ind, (uint)bc->stale_gpio_usecs,
+	       ind, (uint)bc->stale_intr_usecs,
 	       ind, (uint)bc->strings_size,
 	       ind, bc->strings, bc->strings,
 	       get_indent(indent));
@@ -1138,10 +1160,13 @@ void dump_cmd_head(const char *level, unsigned indent, const char *start, const 
 	       "%s  .node           = %p struct list_head {.next = %p, .prev = %p}\n"
 	       "%s  .time_queued    = %lu\n"
 	       "%s  .time_started   = %lu\n"
+	       "%s  .delay_until   = %lu\n"
 	       "%s  .status         = %d\n"
 	       "%s  .mcp_status     = 0x%02hhx\n"
-	       "%s  .state          = %u (%s)\n"
-	       "%s  .can_retry     = %d\n"
+	       "%s  .state          = %hhu (%s)\n"
+	       "%s  .can_retry      = %hhu\n"
+	       "%s  .delayed        = %hhu\n"
+	       "%s  .nonatomic      = %hhu\n"
 	       "%s  .repeat_count   = %d\n"
 	       "%s  .complete       = %p\n"
 	       "%s  .context        = %p\n"
@@ -1152,17 +1177,19 @@ void dump_cmd_head(const char *level, unsigned indent, const char *start, const 
 	       ind, &cmd->node, cmd->node.next, cmd->node.prev,
 	       ind, cmd->time_queued,
 	       ind, cmd->time_started,
+	       ind, cmd->delay_until,
 	       ind, cmd->status,
 	       ind, cmd->mcp_status,
 	       ind, cmd->state, "",
 	       ind, cmd->can_retry,
+	       ind, cmd->delayed,
+	       ind, cmd->nonatomic,
 	       ind, cmd->repeat_count,
 	       ind, cmd->complete,
 	       ind, cmd->context,
 	       ind);
 }
 #endif /* __KERNEL__ */
-
 
 static inline char hex_nybble(u8 n)
 {
@@ -1186,7 +1213,39 @@ static void dump_ctl_msg(const char *level, unsigned indent, struct mcp2210_msg 
 
 		case MCP2210_NVRAM_CHIP:
 			goto chip_config;
-		case MCP2210_NVRAM_KEY_PARAMS:
+
+		case MCP2210_NVRAM_KEY_PARAMS: {
+			const char *fmt =
+			       "%s%s.body.%set_usb_params {\n"
+			       "%s  .vid               = 0x%04hx\n"
+			       "%s  .pid               = 0x%04hx\n"
+			       "%s  .chip_power_option = 0x%02hhx\n"
+			       "%s  .requested_power   = %u\n"
+			       "%s}\n";
+			if (is_set_cmd) {
+				struct mcp2210_usb_key_params *body = &msg->
+							body.set_usb_params;
+				printk(fmt,
+				       level, ind, "s",
+				       ind, body->vid,
+				       ind, body->pid,
+				       ind, body->chip_power_option,
+				       ind, body->requested_power * 2,
+				       ind);
+			} else {
+				typeof(msg->body.get_usb_params) *body = &msg->
+							body.get_usb_params;
+				printk(fmt,
+				       level, ind, "g",
+				       ind, body->vid,
+				       ind, body->pid,
+				       ind, body->chip_power_option,
+				       ind, body->requested_power * 2,
+				       ind);
+			}
+			break;
+		}
+
 		case MCP2210_NVRAM_PROD:
 		case MCP2210_NVRAM_MFG:
 			printk("%s%s  no dump for message type\n", level, ind);
@@ -1208,9 +1267,11 @@ chip_config:
 
 	case MCP2210_CMD_SET_PIN_DIR:
 	case MCP2210_CMD_GET_PIN_DIR:
-
 	case MCP2210_CMD_SET_PIN_VALUE:
 	case MCP2210_CMD_GET_PIN_VALUE:
+		printk("%s%s.body.gpio = 0x%04hx\n",
+		       level, ind, msg->body.gpio);
+		break;
 
 	default:
 		printk("%s%s  no dump for message type\n", level, ind);
