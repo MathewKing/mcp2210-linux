@@ -210,6 +210,52 @@ void dump_mcp_msg(
 # define dump_mcp_msg(level, indent, start, x)		while(0){}
 #endif /* CONFIG_MCP2210_DEBUG_VERBOSE */
 
+
+/* compile-time validation of struct mcp2210_msg */
+static inline void msg_validate_size(void)
+{
+	struct mcp2210_msg validation_msg;
+
+	BUILD_BUG_ON(IS_ENABLED(CONFIG_MCP2210_CREEK)
+		&& (!IS_ENABLED(CONFIG_MCP2210_EEPROM)));
+
+	/* sanity checks on struct mcp2210_msg */
+	BUILD_BUG_ON(sizeof(struct mcp2210_msg) != MCP2210_BUFFER_SIZE);
+	BUILD_BUG_ON(sizeof(validation_msg.head) != 3);
+	BUILD_BUG_ON(sizeof(validation_msg.body) != 60);
+
+	/* validate head offsets */
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, head) != 1);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, head.req) != 1);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, head.rep) != 1);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, head.rep.status) != 1);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, head.rep.xet.status) != 1);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, head.rep.xet.sub_cmd) != 2);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, head.rep.xet.reserved) != 3);
+
+	/* validate body offsets */
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body) != 4);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.chip) != 4);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.spi) != 4);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.get_usb_params) != 4);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.set_usb_params) != 4);
+
+	/* validate body sizes */
+	BUILD_BUG_ON(sizeof(validation_msg.body.chip) != 23);
+	BUILD_BUG_ON(sizeof(validation_msg.body.spi) != 17);
+	BUILD_BUG_ON(sizeof(validation_msg.body.get_usb_params) != 27);
+	BUILD_BUG_ON(sizeof(validation_msg.body.set_usb_params) != 6);
+	BUILD_BUG_ON(sizeof(validation_msg.body.usb_string) != 60);
+	BUILD_BUG_ON(sizeof(validation_msg.body.raw) != 60);
+
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.chip.password) != 19);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.spi.mode) != 20);
+
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.gpio) != 4);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.password) != 4);
+	BUILD_BUG_ON(offsetof(struct mcp2210_msg, body.raw) != 4);
+}
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */

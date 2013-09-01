@@ -66,6 +66,7 @@ extern "C" {
 # define KERN_INFO		""
 # define KERN_DEBUG		""
 # define GFP_KERNEL		0
+# define IS_ENABLED(a)		0
 # define likely(cond)		(cond)
 # define unlikely(cond)		(cond)
 # define IS_ERR_VALUE(x) unlikely((unsigned long)(x) >= (unsigned long)-200)
@@ -826,6 +827,10 @@ mcp2210_eeprom_write(struct mcp2210_device *dev, const u8 *src, u8 addr,
  * inlines
  */
 
+static inline long jiffdiff(unsigned long a, unsigned long b)
+{
+	return (long)a - (long)b;
+}
 
 /* mcp2210_init_msg - initialize an MCP2210 message
  *
