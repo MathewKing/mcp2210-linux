@@ -16,10 +16,10 @@ God loves people who rtfm. It's fun, healthy and besides, everybody's doing it.
 * [spidev](https://www.kernel.org/doc/Documentation/spi/spidev)
 
 
-Building, installing, etc.
-==========================
+Configuring, Building and Installing
+====================================
 
-If you have your kernel sources installed and all is right with the world, building and installing is as simple as:
+If you have your kernel sources installed and all is right with the world, building and installing (with a default configuration) is as simple as:
 
 ```
 make all && make install
@@ -31,10 +31,20 @@ To explicitly say where your sources are, use:
 KERNELDIR=/usr/scr/abcdefg make
 ```
 
+This is still an out-of-tree module, so if you don't fancy the default configuration, run `make modules` at least once to have an out-of-tree-autoconf.h created from the template (or just copy the damn file yourself). Now you can edit it until you like it.  For reference, refer to Kconfig.
+
+Note that at this time, there is no `install` target for the userland utilities and to run `mcp2210-util`, you must explicitly specify an `LD_LIBRARY_PATH`. Example:
+
+```bash
+/home/daniel/proj/mcp2210$ make -j4
+.... make output.....
+/home/daniel/proj/mcp2210$ LD_LIBRARY_PATH=user user/mcp2210-util --help
+```
+
 Cross-Compiling
 ---------------
 
-I'm not going to tell you how to setup a cross-compiling toolchain, but here is how I build for my Raspberry Pi.  Please note that the USB drivers for the Pi are currently problematic (especially prior to a commit late last month), so note the `MCP2210_QUIRKS=1` cpp variable.
+I'm not going to tell you how to setup a cross-compiling toolchain, but here is how I build for my Raspberry Pi.  Please note that the USB drivers for the Pi are currently problematic, especially prior the commit "[USB fix using a FIQ to implement split transactions](https://github.com/raspberrypi/linux/commit/db4fad7380c83b6e1b62dfb3fd61e55d031a04fc)", which has greatly improved things. So note the `MCP2210_QUIRKS=1` cpp variable.
 
 ```bash
 #!/bin/bash
@@ -50,11 +60,11 @@ make mcp2210.s &&
 scp -p mcp2210.ko user/libmcp2210.so user/mcp2210 root@pi:bin/
 ```
 
-At the very least, your KERNELDIR should have a valid .config and you should run make modules_prepare.  You'll need to enable the following in your .config:
+At the very least, your `KERNELDIR` should have a valid `.config` and you should run `make modules_prepare`.  You'll need to enable the following in your .config:
 
-* CONFIG_SPI - if you want to use the MCP2210 as an spi master
-* CONFIG_SPI_SPIDEV - if you want to use the kernel's handy-dandy spidev driver and the userspace utility's spi functionality
-* CONFIG_GPIOLIB - if you want to use the gpio interface which doesn't exist yet :)
+* `CONFIG_SPI` - if you want to use the MCP2210 as an spi master
+* `CONFIG_SPI_SPIDEV` - if you want to use the kernel's handy-dandy spidev driver and the userspace utility's spi functionality
+* `CONFIG_GPIOLIB` - if you want to use the gpio interface
 
 You don't need to make `mcp2210.s` if you don't care to examine the disassembly. The `CFLAGS` supplied when building the userspace program aren't inferred if not supplied (although it really doesn't contain any floating point calculations at the moment).  I use `-j4` because I have a quad core processor, tune to your preferences.  Finally, there is a lot of hard-coded crap in the `Makefile` (The `Kconfig` only exists for future integration into the mainline kernel tree).
 
@@ -99,32 +109,32 @@ For mask, you OR together the values for the configuration option(s) you want to
 	<td>1</td>
 	<td>chip settings (current)</td>
 	<td>3.2.4</td>
-	<td><tt><a href="mcp2210.h#L251">struct mcp2210_chip_settings</a></tt></td>
+	<td><tt><a href="mcp2210.h#L354">struct mcp2210_chip_settings</a></tt></td>
 </tr><tr>
 	<td>2</td>
 	<td>chip settings (power-up)</td>
 	<td>3.1.1</td>
-	<td><tt><a href="mcp2210.h#L251">struct mcp2210_chip_settings</a></tt></td>
+	<td><tt><a href="mcp2210.h#L354">struct mcp2210_chip_settings</a></tt></td>
 </tr><tr>
 	<td>4</td>
 	<td>spi transfer settings (current)</td>
 	<td>3.2.2</td>
-	<td><tt><a href="mcp2210.h#L282">struct mcp2210_spi_xfer_settings</a></tt></td>
+	<td><tt><a href="mcp2210.h#L387">struct mcp2210_spi_xfer_settings</a></tt></td>
 </tr><tr>
 	<td>8</td>
 	<td>spi transfer settings (power-up)</td>
 	<td>3.1.2</td>
-	<td><tt><a href="mcp2210.h#L282">struct mcp2210_spi_xfer_settings</a></tt></td>
+	<td><tt><a href="mcp2210.h#L387">struct mcp2210_spi_xfer_settings</a></tt></td>
 </tr><tr>
 	<td>16</td>
 	<td>key parameters (power-up)</td>
 	<td>3.1.3</td>
-	<td><tt><a href="mcp2210.h#L294">struct mcp2210_usb_key_params</a></tt></td>
+	<td><tt><a href="mcp2210.h#L399">struct mcp2210_usb_key_params</a></tt></td>
 </tr><tr>
 	<td>32</td>
 	<td>board config</td>
 	<td>n/a</td>
-	<td><tt><a href="mcp2210.h#L520">struct mcp2210_board_config</a></tt></td>
+	<td><tt><a href="mcp2210.h#L483">struct mcp2210_board_config</a></tt></td>
 </tr><tr>
 </table>
 
@@ -136,11 +146,13 @@ Automatic Configuration
 -----------------------
 When the driver probes, it queries the device for (among other things) its power-up chip settings (section 3.1.1) and the power-up spi transfer settings (section 3.1.2). If Creek support is enabled (via `CONFIG_MCP2210_CREEK`), the first four bytes of the user EEPROM area are also read. If these match a "magic number", then the remainder of the user-EEPROM is read and decoded into a [`struct mcp2210_board_config`](mcp2210.h#L520) object which contains all of the information (timings for each SPI device, name of the spi protocol driver, label, etc.) to allow probing the spi_master.
 
-For details on the encoding format, see the comments in [`mcp2210-creek.h`](mcp2210-creek#L29.h) (see also [`creek_encode`](mcp2210-lib.c#L467) and [`creek_decode`](mcp2210-lib.c#L277))
+For details on the encoding format, see the comments in [`mcp2210-creek.h`](mcp2210-creek.h#L29) (see also [`creek_encode`](mcp2210-lib.c#L467) and [`creek_decode`](mcp2210-lib.c#L277))
+
+NOTICE: At this time, the Creek binary format is unstable and subject to change without a version bump.
 
 Storing and Viewing Auto-Configure Data
 ---------------------------------------
-All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L520) in `user/settings.h` is in the userspace utility program.
+All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L387) in `user/settings.h` is in the userspace utility program.
 
 1. Edit `user/settings.h` to your needs and recomple `mcp2210-util`
 2. Run the following command to encode to config.dat:

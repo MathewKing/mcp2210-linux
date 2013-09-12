@@ -26,29 +26,83 @@
  *
  * Creek -- because if it doesn't work, you're up one.
  *
- * Format of a Creek configuration
- * 00:0 - 03:7   (32 bits) magic
- * 04:0 - 04:3   (4 bits)  version
- * 04:4 - 06:5   (18 bits) 9x pairs of two bits: 1 = has_name, 2 = has_modalias
- * 06:6 - varies 9x SPI Data
- *               strings
+ * Format of Creek Encoding
  *
- * SPI data is encoded in a manner where each field is compared to a common or
- * standard value. If it matches that value, then a single 0 bit is written
- * and nothing else.  If it doesn't match, then a single 1 bit is written
- * followed by the value as a floating point unsigned interger. The exception
- * is mode, which is always 8 bits.
+ * Start  End  Descrption                             Size In Bits
+ * -------------------------------------------------------------
+ * 0      31   magic (0xc01df00d)                     32
+ * 32     35   version                                4
+ * 36     53   9x Presence of Strings                 18
+ * 54     ?    3-Wire Capability                      1 to 5
+ * ?      ?    IRQs                                   1 to 63
+ * ?      ?    Polling Data (only if IRQs are used)   0 to 52
+ * ?      ?    9x SPI Data                            0 to 648
+ * ?      ?    Strings                                arbitrary
+ *             Total                                  56 to 2048
+ *
+ * Polling Data and SPI data use an encoding where where each field is
+ * compared to a common or standard value. If it matches that value, then a
+ * single 0 bit is written and nothing else.  If it doesn't match, then a
+ * single 1 bit is written followed by the value as a floating point unsigned
+ * interger (see pack_uint_opt() and unpack_uint_opt() for details). In the
+ * tables below, the type "uint_opt" indicates this type of storage (not an
+ * actual C type).
+ *
+ * Presence of Strings
+ * Field                 Num Bits  Presence
+ * ----------------------------------------------------------------------
+ * has_name              1         always
+ * has_modalias          1         always
+ *
+ *
+ * 3-Wire Capability
+ * Field                 Num Bits  Presence
+ * ----------------------------------------------------------------------
+ * _3wire_capable        1         always
+ * _3wire_tx_enable_active_high
+ *                       1         only if _3wire_capable
+ * _3wire_tx_enable_pin  3         only if _3wire_capable
+ *
+ *
+ * IRQs
+ * Field                 Num Bits  Presence
+ * ----------------------------------------------------------------------
+ * has_irq               1         only if spi, gpio or dedicated pin 6
+ * irq.num               3         only if has_irq
+ * irq.type              3         only if has_irq and gpio
+ *
+ *
+ * Polling Data
+ * This section is only present if one or more pins are configured to trigger
+ * an IRQ.
+ *
+ * Field                 Type      Default Value     Precision  Magnitude
+ * ----------------------------------------------------------------------
+ * poll_gpio_usecs (1)   uint                       10          3
+ * stale_gpio_usecs (1)  uint_opt  poll_gpio_usecs  10          3
+ * same_as_gpio (2)      bit
+ * poll_intr_usecs (3)   uint                       10          3
+ * stale_intr_usecs (3)  uint_opt  poll_intr_usecs  10          3
+ *
+ * Footnotes:
+ * 1. Only if a gpio pin exists that uses an IRQ, otherwise not written.
+ * 2. Only if pin 6 is dedicated and has an IRQ and a gpio with an irq exists, otherwise not written.
+ * 3. Only if requirements for both (1) and (2) are met and same_as_gpio is
+ *    set, otherwise not written.
+ *
  *
  * SPI Data
- * Field                 Default Value     Precision  Magnitude
- * ------------------------------------------------------------
- * max_speed_hz          MCP2210_MAX_SPEED 10         2
- * min_speed_hz          MCP2210_MIN_SPEED 10         2
- * mode                --always 8 bits--
- * cs_to_data_delay      0                 7          2
- * last_byte_to_cs_delay 0                 7          2
- * delay_between_bytes   0                 7          2
- * delay_between_xfers   0                 7          2
+ * Field                 Type      Presence  Default Value     Precision  Mag.
+ * ---------------------------------------------------------------------------
+ * max_speed_hz          uint_opt  always    MCP2210_MAX_SPEED 10         2
+ * min_speed_hz          uint_opt  always    MCP2210_MIN_SPEED 10         2
+ * mode                  8 bits    always
+ * use_cs_gpio           1 bit     always
+ * cs_gpio               3 bits,   only if use_cs_gpio
+ * cs_to_data_delay      uint_opt  always    0                 7          2
+ * last_byte_to_cs_delay uint_opt  always    0                 7          2
+ * delay_between_bytes   uint_opt  always    0                 7          2
+ * delay_between_xfers   uint_opt  always    0                 7          2
  *
  * Strings are encoded as 7 bit ASCII with bit 7 terminatng the string.  (We
  * could get better compression by writing string sizes first and then limiting
@@ -80,13 +134,14 @@ struct bit_creek {
 struct creek_data {
 	u8 magic[4];
 	u8 ver:4;
+	u8 str_count;
+	u8 str_size;
+	const char **string_index;
 	u8 spi_pin_num[MCP2210_NUM_PINS];
 	u8 spi_count;
 	u8 name_index[MCP2210_NUM_PINS];
 	u8 modalias_index[MCP2210_NUM_PINS];
-	u8 str_size;
-	const char **string_index;
-	u8 str_count;
+	u8 have_gpio_irqs;
 };
 
 uint creek_get_bits(struct bit_creek *bs, uint num_bits);
