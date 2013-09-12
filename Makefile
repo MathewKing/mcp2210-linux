@@ -4,16 +4,7 @@
 # Derived from the good-ole LDD3 Makefile
 #
 
-# Hack config
-CONFIG += -DCONFIG_MCP2210_MODULE=1 -DCONFIG_MCP2210_SPI=1 \
-	  -DCONFIG_MCP2210_GPIO=1 -DCONFIG_MCP2210_EEPROM=1 \
-	  -DCONFIG_MCP2210_DEBUG=1 -DCONFIG_MCP2210_DEBUG_VERBOSE=1 \
-	  -DCONFIG_MCP2210_CREEK=1 \
-	  -DCONFIG_MCP2210_DEBUG_INITIAL=9 \
-	  -DCONFIG_MCP2210_IOCTL=1 \
-
-
-EXTRA_CFLAGS += -Werror -Wall -g -Wunused-macros $(CONFIG)
+EXTRA_CFLAGS += -Werror -Wall -Wunused-macros $(CONFIG)
 
 # To build modules outside of the kernel tree, we run "make"
 # in the kernel source tree; the Makefile these then includes this
@@ -21,7 +12,6 @@ EXTRA_CFLAGS += -Werror -Wall -g -Wunused-macros $(CONFIG)
 # This conditional selects whether we are being included from the
 # kernel Makefile or not.
 ifeq ($(KERNELRELEASE),)
-
     # Assume the source tree is where the running kernel was built
     # You should set KERNELDIR in the environment if it's elsewhere
     KERNELDIR ?= /lib/modules/$(shell uname -r)/build
@@ -33,7 +23,11 @@ all: modules user
 user:
 	$(MAKE) -C user
 
-modules:
+# Temporary measure for building out-of-tree
+out-of-tree-autoconf.h:
+	cp -n out-of-tree-autoconf.h.template out-of-tree-autoconf.h
+
+modules: out-of-tree-autoconf.h
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
 
 modules_install:
@@ -52,6 +46,10 @@ mcp2210.s: modules
 
 else
     # called from kernel build system: just declare what our modules are
+
+    # When building out-of-tree, we need a way to get our config macros
+    KBUILD_CPPFLAGS += -include $(PWD)/out-of-tree-autoconf.h
+
     CONFIG_MCP2210 ?= m
     mcp2210-objs := mcp2210-core.o mcp2210-ioctl.o mcp2210-ctl.o \
 		    mcp2210-spi.o mcp2210-eeprom.o mcp2210-lib.o \

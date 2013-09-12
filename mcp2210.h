@@ -22,6 +22,9 @@
 
 #ifndef _MCP2210_H
 #define _MCP2210_H
+#ifndef __KERNEL__
+# include "out-of-tree-autoconf.h"
+#endif
 
 #ifdef __KERNEL__
 # include <linux/kconfig.h>
@@ -66,7 +69,7 @@ extern "C" {
 # define KERN_INFO		""
 # define KERN_DEBUG		""
 # define GFP_KERNEL		0
-# define IS_ENABLED(a)		0
+# define IS_ENABLED(a)		1
 # define likely(cond)		(cond)
 # define unlikely(cond)		(cond)
 # define IS_ERR_VALUE(x) unlikely((unsigned long)(x) >= (unsigned long)-200)

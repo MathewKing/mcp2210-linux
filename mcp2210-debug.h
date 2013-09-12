@@ -22,12 +22,13 @@
 #ifndef _MCP2210_DEBUG_H
 #define _MCP2210_DEBUG_H
 
+#include "mcp2210.h"
+
 #ifdef __KERNEL__
 # include <linux/printk.h>
 # include <linux/device.h>
 #endif
 
-#include "mcp2210.h"
 
 #ifdef __cplusplus
 extern "C" {

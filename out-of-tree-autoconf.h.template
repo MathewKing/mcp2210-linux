@@ -1,0 +1,41 @@
+/*
+ * out-of-tree-autoconf.h
+ *
+ * Use this for your configuration when building the MCP2210 out of tree, which
+ * happens to be always right now.
+ */
+
+#ifndef _OUT_OF_TREE_AUTOCONF_H_
+#define _OUT_OF_TREE_AUTOCONF_H_
+
+/* hack for KDevelop's parser until they add the ability fucking specify
+ * gcc-style -include files */
+#ifdef __KERNEL__
+# undef __KERNEL__
+#endif
+#ifndef __USER__
+# define __KERNEL__
+# include <generated/autoconf.h>
+#endif
+
+/* like include/generated/autoconf.h from the kernel tree, comment out what you
+ * don't want (setting it to zero wont work) */
+
+#define CONFIG_MCP2210_MODULE		1
+#define CONFIG_MCP2210_IOCTL		1
+#define CONFIG_MCP2210_SPI		1
+#define CONFIG_MCP2210_GPIO		1
+#define CONFIG_MCP2210_EEPROM		1
+#define CONFIG_MCP2210_CREEK		1
+#define CONFIG_MCP2210_IRQ		1
+#define CONFIG_MCP2210_DEBUG		1
+#define CONFIG_MCP2210_DEBUG_VERBOSE	1
+#define CONFIG_MCP2210_DEBUG_INITIAL	9
+
+/* basically, the RPi */
+#define CONFIG_MCP2210_USB_QUIRKS	1
+
+/* this option will eventually get a better name or be removed */
+#define CONFIG_MCP2210_DONT_SUCK_THE_CPU_DRY 1
+
+#endif /* _OUT_OF_TREE_AUTOCONF_H_ */
