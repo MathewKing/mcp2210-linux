@@ -34,7 +34,7 @@ static const struct mcp2210_chip_settings my_chip_settings = {
 		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_DEDICATED,
-		MCP2210_PIN_GPIO,
+		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_SPI,
 		MCP2210_PIN_GPIO,
 	},
@@ -53,7 +53,7 @@ static const struct mcp2210_chip_settings my_power_up_chip_settings = {
 		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_DEDICATED,
-		MCP2210_PIN_GPIO,
+		MCP2210_PIN_DEDICATED,
 		MCP2210_PIN_SPI,
 		MCP2210_PIN_GPIO,
 	},
@@ -101,33 +101,17 @@ static const struct mcp2210_board_config my_board_config = {
 			.spi.min_speed_hz = 2000,
 			.spi.mode = SPI_MODE_3,
 			.spi.bits_per_word = 8,
-/* CS must be de-asserted between each byte in a transaction.  You send zeros
- * when you are receiving the response.
- *
- * fCK,MAX     | Maximum SPI clock frequency  | 5  MHz max
- * tsetCS      | Chip select setup time       | 350 ns min
- * trCK & tfCK | SPI clock rise and fall time | 25  ns max (@CL = 30 pF)
- * thCK & tlCK | SPI clock high and low time  | 75  ns min
- * tholCS      | Chip select hold time        | 10  ns min
- * tdisCS      | Deselect time                | 800 ns min
- * tsetSDI     | Data input setup time        | 25  ns min
- * tholSDI     | Data input hold time         | 20  ns min
- * tenSDO      | Data output enable time      | 38  ns max
- * tdisSDO     | Data output disable time     | 47  ns max
- * tvSDO       | Data output valid time       | 57  ns max
- */
 			.spi.cs_to_data_delay = 1,
 			.spi.last_byte_to_cs_delay = 1,
 			.spi.delay_between_bytes = 1,
 			.spi.delay_between_xfers = 1,
 			.modalias = "spidev",
 			.name = "L6470",
-
-			/*.desc = "L6470 dSPIN: Fully integrated microstepping "
-				"motor driver with motion engine and SPI" */
 		}, {
 			.mode = MCP2210_PIN_GPIO,
-			.name = "unused%d"
+			.has_irq = 0,
+			.irq = 0,
+			.name = "unused%d",
 		}, {
 			.mode = MCP2210_PIN_DEDICATED,
 			.name = "SSPND"
@@ -141,32 +125,39 @@ static const struct mcp2210_board_config my_board_config = {
 			.mode = MCP2210_PIN_DEDICATED,
 			.name = "USBCFG",
 		}, {
-			.mode = MCP2210_PIN_GPIO,
+			.mode = MCP2210_PIN_DEDICATED,
+			.has_irq = 0,
+			.irq = 0,
 			.name = "MOTION",
 		}, {
 			.mode = MCP2210_PIN_SPI,
+			.has_irq = 0,
+			.irq = 0,
 			.spi.max_speed_hz = 20000,
 			.spi.min_speed_hz = 5000,
 			.spi.mode = SPI_MODE_3,
 			.spi.bits_per_word = 8,
+			.spi.use_cs_gpio = 0,
+			.spi.cs_gpio = 0,
 			.spi.cs_to_data_delay = 2,
 			.spi.last_byte_to_cs_delay = 2,
 			.spi.delay_between_bytes = 4,
-			.spi.delay_between_xfers = 0,
+			.spi.delay_between_xfers = 10,
 			.modalias = "spidev",
 			.name = "ADNS-9800",
 		}, {
-			.mode = MCP2210_PIN_UNUSED,
-			.name = "fried pin%d",
+			.mode = MCP2210_PIN_GPIO,
+			.name = "fried pin%d", /* yeah, I zapped it :( */
 		}
 	},
-	.poll_gpio	  = 1,
-	.poll_intr	  = 0,
-	.poll_gpio_usecs  = 50 * 1000,
-	.poll_intr_usecs  = 50 * 1000,
-	.stale_gpio_usecs = 50 * 1000,
-	.stale_intr_usecs = 50 * 1000,
-	.strings_size	  = 0,
+	.poll_gpio_usecs	      = 0, //10000 * 1000,
+	.stale_gpio_usecs	      = 0, //10000 * 1000,
+	.poll_intr_usecs	      = 0, //10000 * 1000,
+	.stale_intr_usecs	      = 0, //10000 * 1000,
+	._3wire_capable		      = 0,
+	._3wire_tx_enable_active_high = 0,
+	._3wire_tx_enable_pin	      = 0,
+	.strings_size		      = 0,
 };
 
 #endif /* _SETTINGS_H */

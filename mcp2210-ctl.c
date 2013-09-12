@@ -190,13 +190,25 @@ static void store_spi_settings(struct mcp2210_device *dev,
 	if (is_power_up)
 		dev->s.have_power_up_spi_settings = 1;
 	else {
+		unsigned long data_xfer_time;
 		//struct mcp2210_pin_config_spi *devcfg = &dev->config.pins[pin].body.spi;
 		dev->s.have_spi_settings = 1;
 		dev->s.cur_spi_config = pin < MCP2210_NUM_PINS ? pin : -1;
 		dev->s.idle_cs = cfg->idle_cs;
 		dev->s.active_cs = cfg->active_cs;
-		dev->s.spi_delay_per_kb = 100ul * cfg->delay_between_bytes
-				+ 1000000ul * 1024ul * 8ul / cfg->bitrate;
+
+
+		/* on 32-bit machines, use a less accurate calculation to
+		 * prevent overflow */
+		BUILD_BUG_ON(sizeof(unsigned long) < 4);
+		if (sizeof(unsigned long) == 4)
+			data_xfer_time = 10000ul * 1024ul * 8ul
+				       / cfg->bitrate * 100ul;
+		else
+			data_xfer_time = 1000000ul * 1024ul * 8ul
+				       / cfg->bitrate;
+		dev->s.spi_delay_per_kb = data_xfer_time + 100ul * 1024ul
+				        * cfg->delay_between_bytes;
 	}
 }
 
@@ -334,6 +346,9 @@ static int ctl_complete_urb(struct mcp2210_cmd *cmd_head)
 		mcp2210_info("MCP2210_CMD_SET_PIN_DIR");
 		break;
 	case MCP2210_CMD_GET_PIN_VALUE:
+		/* notify interrupt controller */
+		mcp2210_irq_do_gpio(dev, dev->s.chip_settings.gpio_value,
+				    rep->body.gpio);
 		dev->s.chip_settings.gpio_value = rep->body.gpio;
 		mcp2210_info("MCP2210_CMD_GET_PIN_VALUE");
 		dev->s.last_poll_gpio = dev->eps[EP_IN].submit_time;
@@ -343,6 +358,9 @@ static int ctl_complete_urb(struct mcp2210_cmd *cmd_head)
 		mcp2210_info("MCP2210_CMD_SET_PIN_VALUE");
 		break;
 	case MCP2210_CMD_GET_INTERRUPTS:
+		/* notify interrupt controller */
+		mcp2210_irq_do_intr_counter(dev,
+					    req->body.interrupt_event_counter);
 		dev->s.interrupt_event_counter = req->body.interrupt_event_counter;
 		mcp2210_info("MCP2210_CMD_GET_INTERRUPTS");
 		dev->s.last_poll_intr = jiffies;
@@ -431,6 +449,7 @@ static void calculate_active_cs(const struct mcp2210_device *dev,
 {
 	const struct mcp2210_pin_config *pin_cfg;
 	u8 i;
+	u8 use_cs_gpio = dev->config->pins[pin].spi.use_cs_gpio;
 
 	*active_cs = 0;
 	*idle_cs = 0;
@@ -441,7 +460,7 @@ static void calculate_active_cs(const struct mcp2210_device *dev,
 			u16 cs = !(pin_cfg->spi.mode & SPI_CS_HIGH);
 
 			*idle_cs |= cs << i;
-			if (pin == i) {
+			if (!use_cs_gpio && pin == i) {
 				if (spi)
 					cs = !!(spi->mode & SPI_CS_HIGH);
 				else
@@ -456,9 +475,12 @@ static void calculate_active_cs(const struct mcp2210_device *dev,
 void calculate_spi_settings(struct mcp2210_spi_xfer_settings *dest,
 			    const struct mcp2210_device *dev,
 			    const struct spi_device *spi,
+			    const struct spi_message *msg,
 			    const struct spi_transfer *xfer, u8 pin)
 {
 	const struct mcp2210_spi_xfer_settings *cur;
+	const struct spi_transfer *pos = xfer;
+	uint len = 0;
 
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		BUG_ON(!dev);
@@ -467,6 +489,14 @@ void calculate_spi_settings(struct mcp2210_spi_xfer_settings *dest,
 		BUG_ON(!xfer);
 		BUG_ON(dev->spi_master != spi->master);
 		BUG_ON(pin > 8);
+	}
+
+	/* count bytes in this transfer chain */
+	list_for_each_entry_from(pos, &msg->transfers, transfer_list) {
+		len += pos->len;
+
+		if (pos->cs_change)
+			break;
 	}
 
 	cur = (pin == dev->s.cur_spi_config) ? &dev->s.spi_settings : NULL;
@@ -478,7 +508,7 @@ void calculate_spi_settings(struct mcp2210_spi_xfer_settings *dest,
 		dest->bitrate = spi->max_speed_hz;
 
 	calculate_active_cs(dev, spi, pin, &dest->active_cs, &dest->idle_cs);
-	dest->bytes_per_trans	= xfer->len;
+	dest->bytes_per_trans = len;
 	/* "mode" for the mcp2210 means "spi mode" only */
 	dest->mode		= spi->mode & SPI_MODE_3;
 
@@ -493,7 +523,5 @@ void calculate_spi_settings(struct mcp2210_spi_xfer_settings *dest,
 		dest->last_byte_to_cs_delay	= cfg->last_byte_to_cs_delay;
 		dest->delay_between_bytes	= cfg->delay_between_bytes;
 	}
-
-
 }
 

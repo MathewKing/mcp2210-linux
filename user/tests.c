@@ -28,20 +28,17 @@ static int compare_board_config(const struct mcp2210_board_config *a,
 				const struct mcp2210_board_config *b) {
 	uint i;
 
-	if (a->poll_gpio	!= b->poll_gpio)	return 1;
-	if (a->poll_intr	!= b->poll_intr)	return 2;
-	if (a->poll_gpio_usecs	!= b->poll_gpio_usecs)	return 3;
-	if (a->poll_intr_usecs	!= b->poll_intr_usecs)	return 4;
-	if (a->stale_gpio_usecs	!= b->stale_gpio_usecs)	return 5;
-	if (a->stale_intr_usecs	!= b->stale_intr_usecs)	return 6;
+	if (a->poll_gpio_usecs	!= b->poll_gpio_usecs)	return 1;
+	if (a->poll_intr_usecs	!= b->poll_intr_usecs)	return 2;
+	if (a->stale_gpio_usecs	!= b->stale_gpio_usecs)	return 3;
+	if (a->stale_intr_usecs	!= b->stale_intr_usecs)	return 4;
 
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		const struct mcp2210_pin_config *pa = &a->pins[i];
 		const struct mcp2210_pin_config *pb = &b->pins[i];
 		uint desc = (i + 1) << 4;
 
-		if (pa->mode != pb->mode && pb->mode != MCP2210_PIN_UNUSED
-					 && pa->mode != MCP2210_PIN_UNUSED)
+		if (pa->mode != pb->mode)
 			return desc;
 
 		if (!!pa->name != !!pb->name)
@@ -57,9 +54,16 @@ static int compare_board_config(const struct mcp2210_board_config *a,
 			return desc | 4;
 
 		switch (pa->mode) {
+		case MCP2210_PIN_DEDICATED:
+		case MCP2210_PIN_GPIO:
+			if (pa->has_irq	 != pb->has_irq	) return desc | 5;
+			if (pa->irq	 != pb->irq	) return desc | 6;
+			if (pa->irq_type != pb->irq_type) return desc | 7;
+			break;
+
 		case MCP2210_PIN_SPI:
 			if (memcmp(&pa->spi, &pb->spi, sizeof(pa->spi)))
-				return desc | 5;
+				return desc | 8;
 			break;
 
 		default:
@@ -77,12 +81,10 @@ static void print_failed_item(int val) {
 
 	if (val < 16) {
 		switch (val) {
-		case 1: item = "poll_gpio"; break;
-		case 2: item = "poll_intr"; break;
-		case 3: item = "poll_gpio_usecs"; break;
-		case 4: item = "poll_intr_usecs"; break;
-		case 5: item = "stale_gpio_usecs"; break;
-		case 6: item = "stale_intr_usecs"; break;
+		case 1: item = "poll_gpio_usecs"; break;
+		case 2: item = "poll_intr_usecs"; break;
+		case 3: item = "stale_gpio_usecs"; break;
+		case 4: item = "stale_intr_usecs"; break;
 		default: item = "bad code"; break;
 		}
 		fprintf(stderr, "%s", item);
@@ -95,7 +97,10 @@ static void print_failed_item(int val) {
 		case 2: item = "name"; break;
 		case 3: item = "modalias presence"; break;
 		case 4: item = "modalias"; break;
-		case 5: item = "spi memcmp"; break;
+		case 5: item = "has_irq"; break;
+		case 6: item = "irq"; break;
+		case 7: item = "irq_type"; break;
+		case 8: item = "spi memcmp"; break;
 		default: item = "bad code"; break;
 		}
 		fprintf(stderr, "pin %u, %s", pin, item);

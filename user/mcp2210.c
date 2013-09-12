@@ -339,6 +339,7 @@ int get_config(int argc, char *argv[]) {
 	if (cfg->state.have_config)
 		dump_board_config("", 0, ".config = ", &cfg->config);
 
+#if 0
 	ret = creek_encode(&cfg->config, &cfg->state.power_up_chip_settings, buf, sizeof(buf));
 	if (ret < 0) {
 		errno = -ret;
@@ -353,7 +354,7 @@ int get_config(int argc, char *argv[]) {
 		fprintf(stderr, "wrote %d bytes\n", ret);
 		ret = 0;
 	}
-
+#endif
 exit_free:
 	free(data);
 	return ret;
@@ -769,6 +770,10 @@ static __always_inline void _spidev_set(int fd, unsigned long request, void *val
 	}
 }
 
+struct spi_msg *get_msg_from_file(void) {
+	return NULL;
+}
+
 #define spidev_set(fd, request, value, desc) 				\
 	do {								\
 		if (!(*(value)))					\
@@ -782,15 +787,18 @@ static int spidev_send(int argc, char *argv[]) {
 	unsigned i;
 	struct spi_msg *msg;
 
-	msg = parse_msgs(argc, argv);
-	if (IS_ERR(msg)) {
-		if (PTR_ERR(msg) == -EINVAL) {
-			show_usage();
-			return -1;
+	if (argc) {
+		msg = parse_msgs(argc, argv);
+		if (IS_ERR(msg)) {
+			if (PTR_ERR(msg) == -EINVAL) {
+				show_usage();
+				return -1;
+			}
+			errno = -PTR_ERR(msg);
+			fatal_error("failed to parse messages");
 		}
-		errno = -PTR_ERR(msg);
-		fatal_error("failed to parse messages");
-	}
+	} else
+		msg = get_msg_from_file();
 
 	for (i = 0; i < msg->num_xfers; ++i) {
 		fprintf(stderr, "request %d:\n", i);

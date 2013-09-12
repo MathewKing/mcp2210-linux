@@ -21,9 +21,11 @@
 
 #include <linux/spi/spi.h>
 #include <linux/version.h>
+#include <linux/kernel.h>
 
 #include "mcp2210.h"
 #include "mcp2210-debug.h"
+
 
 /* The non-queued mechanism will supposedly be phased out in the future.
  * However, we don't get any benefit from the new API since we just queue
@@ -103,7 +105,7 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	master->bus_num = -1;
 	master->num_chipselect = MCP2210_NUM_PINS;
 	/* unused: master->dma_alignment */
-	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_LSB_FIRST | SPI_3WIRE;
+	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_LSB_FIRST; // | SPI_3WIRE | SPI_NO_CS;
 	/* TODO: what's bits_per_word_mask for? */
 	master->flags = 0;
 	/* unused: master->bus_lock_spinlock
@@ -148,9 +150,28 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 		chip->chip_select   = i;
 		chip->mode	    = cfg->spi.mode;
 		chip->bits_per_word = cfg->spi.bits_per_word;
-		/* unused: chip->cs_gpio
-		 * unused: chip->irq
-		 * unused: chip->controller_state
+
+#ifdef CONFIG_MCP2210_GPIO
+		if (cfg->spi.use_cs_gpio)
+			chip->cs_gpio = dev->gpio.base + cfg->spi.cs_gpio;
+		else
+#endif
+			chip->cs_gpio = -EINVAL;
+
+#ifdef CONFIG_MCP2210_IRQ
+		if (cfg->has_irq)
+			chip->irq = dev->irq_base + cfg->irq;
+		else
+#endif
+			chip->irq = -1;
+
+		if (cfg->spi.use_cs_gpio)
+			mcp2210_warn("not yet implemented: cs_gpio");
+
+		if (cfg->has_irq)
+			mcp2210_warn("not yet implemented: IRQs");
+
+		/* unused: chip->controller_state
 		 * unused: chip->controller_data
 		 */
 		modalias = cfg->modalias ? cfg->modalias : "spidev";
@@ -168,6 +189,8 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	}
 
 	dev->spi_master = master;
+	dev->s.is_spi_probed = 1;
+
 	return 0;
 
 error1:
@@ -289,6 +312,7 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 						     struct spi_transfer,
 						     transfer_list);
 	gfp_t gfp_flags = can_sleep ? GFP_KERNEL : GFP_ATOMIC;
+	uint xfer_chain_size = 0;
 	int ret;
 
 	mcp2210_info("Start new transfer (pin %d)\n", pin);
@@ -312,17 +336,27 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 				struct spi_transfer,
 				transfer_list);
 
+		/* Validate that an individual transfer or chain isn't too
+		 * large for this poor thing to handle (if you really need this
+		 * and are using gpio for cs then you can hack this driver to
+		 * make it happen). */
+		xfer_chain_size += xfer->len;
+
+		if (xfer->len > 0xffff) {
+			mcp2210_err("SPI transfer (or chain) too large for "
+				    "MCP2210 (%u bytes)", xfer_chain_size);
+			return -EINVAL;
+		}
+
+		if (xfer->cs_change)
+			xfer_chain_size = 0;
+
 		/* debug-only sanity checks */
 		if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 			if (!(xfer->tx_buf || xfer->rx_buf)) {
 				mcp2210_err("spi_transfer w/o tx or rx buffer");
 				return -EINVAL;
 			}
-		}
-
-		if (xfer->cs_change) {
-			mcp2210_warn("unsupported: spi_transfer.cs_change = 1");
-			return -EINVAL;
 		}
 
 		if (xfer->bits_per_word && xfer->bits_per_word != 8) {
@@ -334,6 +368,7 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 		if (validate_speed(dev, xfer->speed_hz))
 			return -EINVAL;
 	}
+
 
 	cmd = mcp2210_alloc_cmd_type(dev, struct mcp2210_cmd_spi_msg,
 				     &mcp2210_cmd_type_spi, gfp_flags);
@@ -347,11 +382,14 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 	cmd->spi = msg->spi;
 	cmd->msg = msg;
 	cmd->xfer = first_xfer;
+	cmd->head.non_preemptable = 1;
 	/* not needed (kzalloc)
-	cmd->tx_pos = 0;
-	cmd->rx_pos = 0;
-	cmd->tx_bytes_in_process = 0;
-	cmd->xfer_settings_change = 0;
+	cmd->pos = 0;
+	cmd->pending_unacked = 0;
+	cmd->pending_unacked = 0;
+	cmd->pending_bytes = 0;
+	cmd->busy_count = 0
+	cmd->spi_in_flight = 0
 	cmd->ctl_cmd = NULL;
 	*/
 
@@ -376,6 +414,8 @@ static int prepare_transfer_hardware(struct spi_master *master)
 	struct mcp2210_device *dev = mcp2210_spi_master2dev(master);
 	mcp2210_info();
 
+	/* if we knew the size of the message, we could actually prepare */
+
 	return 0;
 }
 
@@ -399,11 +439,82 @@ static int unprepare_transfer_hardware(struct spi_master *master)
  * SPI Message command functions
  */
 
+static int spi_ctl_cmd_submit_prepare(struct mcp2210_cmd_spi_msg *cmd)
+{
+	struct mcp2210_device *dev = cmd->head.dev;
+	struct mcp2210_cmd *ctl_cmd_head = &dev->ctl_cmd.head;
+
+	cmd->ctl_cmd = &dev->ctl_cmd;
+	cmd->head.can_retry = 1;
+
+	mcp2210_info("----SUBMITING CONTROL COMMAND----");
+	return ctl_cmd_head->type->submit_prepare(ctl_cmd_head);
+}
+
+static int spi_prepare_device(struct mcp2210_cmd_spi_msg *cmd)
+{
+	struct mcp2210_device *dev = cmd->head.dev;
+	struct mcp2210_spi_xfer_settings needed;
+	u8 pin = cmd->spi->chip_select;
+
+	 /* If we have an active control command it probably means that this is
+	  * a retry, (failed URB or the device was busy) so we need to retry. */
+	if (cmd->ctl_cmd)
+		return spi_ctl_cmd_submit_prepare(cmd);
+
+	/* Check if the chip is in the middle of a failed SPI transfer and if
+	 * so, cancel it. */
+	if (unlikely(dev->spi_in_flight)) {
+		mcp2210_warn("*** old SPI message still in-flight, killing it "
+			     "***");
+		ctl_cmd_init(dev, &dev->ctl_cmd, MCP2210_CMD_SPI_CANCEL, 0,
+			     NULL, 0, false);
+		return spi_ctl_cmd_submit_prepare(cmd);
+	}
+
+	if (cmd->spi->mode | SPI_3WIRE) {
+		/* TODO: setup gpio controlling mosi */
+	}
+
+	mcp2210_debug("dev->s.cur_spi_config = %d", dev->s.cur_spi_config);
+	dump_spi_xfer_settings(KERN_DEBUG, 0, "dev->s.spi_settings = ",
+			       &dev->s.spi_settings);
+	calculate_spi_settings(&needed, dev, cmd->spi, cmd->msg, cmd->xfer, pin);
+
+	if (needed.bytes_per_trans == 0) {
+		mcp2210_err("Invalid: cannot send a zero-sized message");
+		return -EINVAL;
+	}
+
+	/* If this is the pin we are currently configured to SPI on, then let's
+	 * see if there's any difference in the SPI settings */
+	if (pin == dev->s.cur_spi_config) {
+		/* if nothing changed, then then do the SPI xfer */
+		if (!compare_spi_settings(&needed, &dev->s.spi_settings))
+			return 0;
+
+		mcp2210_debug("SPI transfer settings didn't match");
+		dump_spi_xfer_settings(KERN_DEBUG, 0, "needed = ", &needed);
+		dump_spi_xfer_settings(KERN_DEBUG, 0, "dev->spi_settings = ",
+				       &dev->s.spi_settings);
+	}
+
+	/* TODO: still missing cmd->spi->mode & (~(SPI_MODE_3 | SPI_CS_HIGH)) */
+	mcp2210_info("Settings SPI Transfer Settings");
+	ctl_cmd_init(dev, &dev->ctl_cmd, MCP2210_CMD_SET_SPI_CONFIG, 0,
+		     &needed, sizeof(needed), false);
+	dev->ctl_cmd.pin = pin;
+
+	return spi_ctl_cmd_submit_prepare(cmd);
+}
+
 static int spi_submit_prepare(struct mcp2210_cmd *cmd_head)
 {
 	struct mcp2210_cmd_spi_msg *cmd = (void *)cmd_head;
 	struct mcp2210_device *dev;
 	struct mcp2210_msg *req;
+	unsigned len;
+	const void *start;
 	u8 pin;
 
 	BUG_ON(!cmd_head->dev);
@@ -420,102 +531,51 @@ static int spi_submit_prepare(struct mcp2210_cmd *cmd_head)
 	/* If we're in the middle of an SPI transfer, we can't do control
 	 * commands. Thus, we should never have a control command going on at
 	 * the saime time we're in the middle of an SPI transfer.  Also, SPI
-	 * transfers cannot be retried if there's a failure or stalled URB at
-	 * the USB level.
+	 * transfers cannot be retried if there's a failed or stalled URB at
+	 * the USB level.  This mostly applies to broken usb drivers, but can
+	 * also with hardware failures, etc.
 	 */
 	if (cmd->spi_in_flight)
 		BUG_ON(cmd->ctl_cmd);
 	else {
-		struct mcp2210_spi_xfer_settings needed;
-		int need_spi_settings;
+		int ret = spi_prepare_device(cmd);
 
-		/* If we haev an active control command it probably means that
-		 * this is a retry, so we need to finish that up. */
-		if (cmd->ctl_cmd) {
-			struct mcp2210_cmd *cc;
-submit_ctl_cmd:
-			cc = &cmd->ctl_cmd->head;
-			cmd->head.can_retry = 1;
-
-			mcp2210_info("----SUBMITING CONTROL COMMAND----");
-			return cc->type->submit_prepare(cc);
-		}
-
-		/* the chip may be in the middle of a failed SPI transfer, so
-		 * we have to kill that */
-		if (unlikely(dev->spi_in_flight)) {
-			mcp2210_warn("***** old SPI message still in-flight, "
-				     "killing...");
-			ctl_cmd_init(dev, &dev->ctl_cmd, MCP2210_CMD_SPI_CANCEL,
-				     0, NULL, 0, false);
-			cmd->ctl_cmd = &dev->ctl_cmd;
-			goto submit_ctl_cmd;
-		}
-
-		need_spi_settings = 1;
-		mcp2210_debug("dev->s.cur_spi_config = %d",
-			      dev->s.cur_spi_config);
-		dump_spi_xfer_settings(KERN_DEBUG, 0, "dev->s.spi_settings = ",
-				       &dev->s.spi_settings);
-		calculate_spi_settings(&needed, dev, cmd->spi, cmd->xfer, pin);
-
-
-		/* If this is the pin we are currently configured to SPI on,
-		 * then let's see if there's any difference in the SPI
-		 * settings */
-		if (pin == dev->s.cur_spi_config) {
-			/* if nothing changed, then then do the SPI xfer */
-			if (!compare_spi_settings(&needed, &dev->s.spi_settings))
-				need_spi_settings = 0;
-			else if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
-				mcp2210_debug("SPI transfer settings didn't "
-					      "match");
-				dump_spi_xfer_settings(KERN_DEBUG, 0,
-						       "needed = ", &needed);
-				dump_spi_xfer_settings(KERN_DEBUG, 0,
-						       "dev->spi_settings = ",
-						       &dev->s.spi_settings);
-			}
-		}
-
-		/* TODO: still missing cmd->spi->mode & (~(SPI_MODE_3 | SPI_CS_HIGH)) */
-		if (need_spi_settings) {
-			cmd->ctl_cmd = &dev->ctl_cmd;
-			mcp2210_info("Settings SPI Transfer Settings");
-			ctl_cmd_init(dev, cmd->ctl_cmd,
-				     MCP2210_CMD_SET_SPI_CONFIG, 0, &needed,
-				     sizeof(needed), false);
-			cmd->ctl_cmd->pin = pin;
-			goto submit_ctl_cmd;
-		}
-	}
-
-	/* If the last attempt to tx failed, we need to rewind tx_pos */
-	if (cmd->tx_bytes_in_process) {
-		cmd->tx_pos -= cmd->tx_bytes_in_process;
-		cmd->tx_bytes_in_process = 0;
+		/* cmd->ctl_cmd will be non-null if we're submitting a control
+		 * command. */
+		if (ret || cmd->ctl_cmd)
+			return ret;
 	}
 
 	/* Write spi transfer command */
-	if (cmd->tx_pos < cmd->xfer->len) {
-		unsigned len = cmd->xfer->len - cmd->tx_pos;
-		const void *start = cmd->xfer->tx_buf + cmd->tx_pos;
+	if (cmd->pos + cmd->pending_bytes < cmd->xfer->len) {
+		len = cmd->xfer->len - cmd->pos - cmd->pending_bytes;
 
 		if(len > MCP2210_BUFFER_SIZE - 4)
 			len = MCP2210_BUFFER_SIZE - 4;
 
-		mcp2210_init_msg(req, MCP2210_CMD_SPI_TRANSFER, len,
-				 0, start, len, true);
+		/* for NULL tx buffer means we just send zeros.  Unfortunately,
+		 * we can't do 3-wire and have MOSI in high-z with this device,
+		 * so you'll have to use a gpio and external component to
+		 * enable that */
+		start = cmd->xfer->tx_buf ? cmd->xfer->tx_buf + cmd->pos + cmd->pending_bytes
+					  : NULL;
 
-		cmd->tx_bytes_in_process = len;
-
-		mcp2210_debug("sending %u bytes", len);
+		cmd->pending_unacked = len;
+		cmd->pending_bytes  += len;
 	} else {
-		mcp2210_init_msg(req, MCP2210_CMD_SPI_TRANSFER, 0,
-				 0, NULL, 0, true);
-		mcp2210_debug("sending empty SPI message");
+		len = 0;
+		start = NULL;
 	}
 
+	mcp2210_init_msg(req, MCP2210_CMD_SPI_TRANSFER, len, 0, start, len,
+			 true);
+
+	if (len)
+		mcp2210_info("sending %u bytes", len);
+	else
+		mcp2210_info("requesting final data");
+
+mcp2210_debug("len: %u, cmd->pending_bytes: %hu\n", len, cmd->pending_bytes);
 	dev->spi_in_flight = 1;
 	cmd->spi_in_flight = 1;
 	cmd->head.can_retry = 0;
@@ -524,19 +584,40 @@ submit_ctl_cmd:
 	return 0;
 }
 
+static void spi_complete_ctl_cmd(struct mcp2210_cmd_spi_msg *cmd)
+{
+	struct mcp2210_device *dev = cmd->head.dev;
+	struct mcp2210_cmd *cc = &cmd->ctl_cmd->head;
+
+	/* always returns zero, so ignoring return value */
+	cc->type->complete_urb(cc);
+
+	if (IS_ENABLED(CONFIG_MCP2210_DEBUG) && dump_commands) {
+		mcp2210_info("----CONTROL COMMAND RESPONSED----");
+
+		cc->state = MCP2210_STATE_COMPLETE;
+		/* get the dump function to print the response */
+		mcp2210_debug("dev->s.cur_spi_config = %d",
+				dev->s.cur_spi_config);
+		dump_spi_xfer_settings(KERN_INFO, 0, "spi settings "
+					"now: ", &dev->s.spi_settings);
+	}
+
+	cmd->ctl_cmd = NULL;
+}
+
 static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 {
 	struct mcp2210_cmd_spi_msg *cmd = (void *)cmd_head;
-	struct mcp2210_device *dev;
+	struct mcp2210_device *dev = cmd_head->dev;
 	struct mcp2210_msg *rep;
 	const struct mcp2210_pin_config_spi *cfg;
-	unsigned bytes_pending;
+	unsigned long now = jiffies;
+//	long urb_duration = jiffdiff(now, dev->eps[EP_OUT].submit_time);
+//	int bytes_pending;
 	long expected_time_usec = 0;
-	u8 pin;
+	u8 pin = cmd->spi->chip_select;
 	u8 len;
-
-	dev = cmd_head->dev;
-	pin = cmd->spi->chip_select;
 
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		BUG_ON(!cmd_head->dev);
@@ -547,26 +628,7 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 	mcp2210_info();
 
 	if(cmd->ctl_cmd) {
-		struct mcp2210_cmd *cc = &cmd->ctl_cmd->head;
-		int ret;
-		ret = cc->type->complete_urb(cc);
-
-		if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
-			mcp2210_info("----CONTROL COMMAND RESPONSED----");
-
-			/* get the dump function to print the response */
-			cc->state = MCP2210_STATE_COMPLETE;
-			mcp2210_debug("dev->s.cur_spi_config = %d",
-				      dev->s.cur_spi_config);
-			dump_spi_xfer_settings(KERN_INFO, 0, "spi settings "
-					       "now: ", &dev->s.spi_settings);
-		}
-
-		if (ret)
-			BUG(); // oops
-		else
-			cmd->ctl_cmd = NULL;
-
+		spi_complete_ctl_cmd(cmd);
 		return -EAGAIN;
 	}
 
@@ -575,66 +637,112 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 	cfg = &dev->config->pins[pin].spi;
 
 
-	/* by "in process", we mean really sent to the MCP2210 */
-	cmd->tx_pos += cmd->tx_bytes_in_process;
-	bytes_pending = cmd->tx_bytes_in_process - len;
-	cmd->tx_bytes_in_process = 0;
+	/* len is the number of bytes successfully txed and rxed to/from the
+	 * SPI peripheral */
+	if (cmd->pending_bytes < len) {
+		mcp2210_err("Device returned (and transmitted) more bytes "
+			    "than expected.");
+		return -EOVERFLOW;
+	}
+
+	cmd->pending_bytes -= len;
+	cmd->pending_unacked = 0;
 
 	mcp2210_info("pin %hhu\n", pin);
-	//print_mcp_msg(cmd->head.dev, KERN_DEBUG, "SPI response: ", rep);
+	//mcp2210_debug("len: %hhu, cmd->pending_bytes: %hu, URB duration %uus (%lu jiffies)\n", len, cmd->pending_bytes, jiffies_to_usecs(urb_duration), urb_duration);
+	//dump_msg(cmd->head.dev, KERN_DEBUG, "SPI response: ", rep);
 
+	/* See if there is data to receive */
 	if (len) {
-		/* There is data to receive */
+#if 0
+		/* bounds check first */
+		if (unlikely(cmd->pos + len > cmd->xfer->len)) {
+			mcp2210_err("received more data from device than "
+				    "expected.");
+			return -EOVERFLOW;
+		}
+#endif
+
 		if(cmd->xfer->rx_buf)
-			memcpy(cmd->xfer->rx_buf + cmd->rx_pos, rep->body.raw,
+			memcpy(cmd->xfer->rx_buf + cmd->pos, rep->body.raw,
 			       len);
 
-		cmd->rx_pos += len;
+		cmd->pos += len;
 		cmd->msg->actual_length += len;
 	}
 
-	if(cmd->rx_pos == cmd->xfer->len) {
-		struct list_head *next = cmd->xfer->transfer_list.next;
-		/* Transfer is done move next */
-		mcp2210_info("All rx bytes read\n");
-		dev->spi_in_flight = 0;
-		cmd->spi_in_flight = 0;
+	dump_cmd_spi(KERN_DEBUG, 0, "fuck ", cmd_head);
 
-		if (cmd->msg->transfers.prev == &cmd->xfer->transfer_list) {
+	/* check if xfer is finished */
+	if(cmd->pos == cmd->xfer->len) {
+		struct list_head *next = cmd->xfer->transfer_list.next;
+
+		BUG_ON(cmd->pending_bytes != 0); /* temporary sanity check */
+
+		/* Transfer is done move next */
+		mcp2210_info("%u byte xfer complete (all rx bytes read)",
+			     cmd->xfer->len);
+
+		/* if cs_change, then clearing cmd->spi_in_flight will trigger
+		 * a re-check of spi transfer settings in the next call to
+		 * spi_submit_prepare() */
+		if (cmd->xfer->cs_change)
+			dev->spi_in_flight = cmd->spi_in_flight = 0;
+
+		if (list_is_last(&cmd->xfer->transfer_list,
+				 &cmd->msg->transfers)) {
 			mcp2210_info("Command complete");
+			dev->spi_in_flight = cmd->spi_in_flight = 0;
 			cmd->msg->status = cmd->head.status = 0;
-			//spi_finalize_current_message(dev->spi_master);
 			return 0;
 		}
 
 		mcp2210_info("Starting next spi_transfer...");
-		/* TODO: check if we have a new length and re-adjust if needed */
 		cmd->xfer = list_entry(next, struct spi_transfer,
 				       transfer_list);
-		cmd->tx_pos = 0;
-		cmd->rx_pos = 0;
-		cmd->tx_bytes_in_process = 0;
-		cmd->spi_in_flight = 0;
+		cmd->pos = 0;
+		cmd->pending_bytes = 0;
 		cmd->busy_count = 0;
 		cmd->ctl_cmd = NULL;
 
-		expected_time_usec = cfg->delay_between_xfers;
-		cmd->head.delay_until = jiffies + msecs_to_jiffies(1);
-		cmd->head.delayed = 1;
-	} else {
-		/* try to determine when the device will be ready */
-		expected_time_usec = 100ul * cfg->last_byte_to_cs_delay
-			+ bytes_pending * dev->s.spi_delay_per_kb / 1024ul;
+#ifndef CONFIG_MCP2210_DONT_SUCK_THE_CPU_DRY
+	}
+#else
+		/* honor delay between xfers here */
+		expected_time_usec = 100ul * cfg->delay_between_xfers;
+
+	} else if (cmd->pending_bytes >= pending_bytes_wait_threshold) {
+		/* if the MCP2210's tiny buffer has at least
+		 * pending_bytes_wait_threshold bytes in it then we'll give it
+		 * some more time before sneding more */
+
+		mcp2210_debug("cmd->pending_bytes: %u @ %uHz\n", cmd->pending_bytes, dev->s.spi_settings.bitrate);
+		expected_time_usec = cmd->pending_bytes
+				   * dev->s.spi_delay_per_kb / 1024ul;
+
+		/* Account for last byte to CS delay if applicable */
+		if (cmd->xfer->cs_change && list_is_last(
+						&cmd->xfer->transfer_list,
+						&cmd->msg->transfers)) {
+			expected_time_usec += 100ul * cfg->last_byte_to_cs_delay;
+ 		}
+
+ 		/* We only get this at the start of a transfer, so this should
+		 * be correct */
 		if (rep->head.rep.spi.spi_status == 0x20)
 			expected_time_usec += 100ul * cfg->cs_to_data_delay;
 	}
 
-	mcp2210_info("expected_time_usec: %lu (%lu jiffies)",
-		     expected_time_usec, usecs_to_jiffies(expected_time_usec));
+	mcp2210_debug("expected_time_usec: %lu (%lu jiffies)\n",
+		      expected_time_usec, usecs_to_jiffies(expected_time_usec));
+#endif /* CONFIG_MCP2210_DONT_SUCK_THE_CPU_DRY */
 
-	cmd->head.delay_until = dev->eps[EP_OUT].submit_time
-					+ usecs_to_jiffies(expected_time_usec);
-	cmd->head.delayed = 1;
+	if (expected_time_usec) {
+		cmd->head.delay_until = now + usecs_to_jiffies(expected_time_usec);
+		cmd->head.delayed = 1;
+	} else
+		cmd->head.delayed = 0;
+
 	return -EAGAIN;
 }
 
@@ -643,17 +751,27 @@ static int spi_mcp_error(struct mcp2210_cmd *cmd_head)
 	struct mcp2210_cmd_spi_msg *cmd = (void *)cmd_head;
 	struct mcp2210_device *dev = cmd->head.dev;
 
-	/* TODO: use delayed work? */
-	mcp2210_warn("cmd->busy_count %u\n", cmd->busy_count);
+	/* remove the rejected bytes from the in-process count */
+	BUG_ON(cmd->pending_unacked > cmd->pending_bytes);
+	cmd->pending_bytes -= cmd->pending_unacked;
+	cmd->pending_unacked = 0;
 
-	++cmd->busy_count;
-	if (cmd->busy_count < 32) {
-		/* hmm, hopefully shoudn't happen */
-		cmd->head.delay_until = jiffies + 1;
-		cmd->head.delayed = 1;
-		return -EAGAIN;
-	} else
-		return -EBUSY;
+	if (cmd->head.mcp_status == MCP2210_STATUS_BUSY) {
+		mcp2210_warn("cmd->busy_count %u\n", cmd->busy_count);
+
+		++cmd->busy_count;
+		if (cmd->busy_count < 64) {
+			/* hmm, hopefully shoudn't happen */
+			/* FIXME: tweak this somehow */
+			cmd->head.delay_until = jiffies + usecs_to_jiffies(750);
+			cmd->head.delayed = 1;
+			return -EAGAIN;
+		} else
+			return -EBUSY;
+	}
+	mcp2210_err("Unexpected return value from MCP2210: 0x%02hhx",
+		    cmd->head.mcp_status);
+	return -EIO;
 }
 
 static int spi_complete_cmd(struct mcp2210_cmd *cmd_head, void *context)

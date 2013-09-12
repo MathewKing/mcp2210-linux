@@ -26,7 +26,6 @@
 #include "mcp2210.h"
 #include "mcp2210-debug.h"
 
-
 //static int  request	    (struct gpio_chip *chip, unsigned offset);
 //static void free	    (struct gpio_chip *chip, unsigned offset);
 static int  get_direction   (struct gpio_chip *chip, unsigned offset);
@@ -66,16 +65,20 @@ int mcp2210_gpio_probe(struct mcp2210_device *dev)
 	gpio->owner		= THIS_MODULE;
 //	INIT_LIST_HEAD(&gpio->list);
 
-//	gpio->request		= request;
-//	gpio->free		= free;
+	gpio->request		= NULL;
+	gpio->free		= NULL;
 	gpio->get_direction	= get_direction;
 	gpio->direction_input	= direction_input;
 	gpio->get		= get;
 	gpio->direction_output	= direction_output;
-//	gpio->set_debounce	= set_debounce;
+	gpio->set_debounce	= NULL;
 	gpio->set		= set;
-//	gpio->to_irq		= to_irq;
-//	gpio->dbg_show		= dbg_show;
+#ifdef CONFIG_MCP2210_IRQ
+	gpio->to_irq		= mcp2210_gpio_to_irq;
+#else
+	gpio->to_irq		= NULL;
+#endif
+	gpio->dbg_show		= NULL;
 
 	gpio->base		= -1; /* request dynamic ID allocation */
 	gpio->ngpio		= MCP2210_NUM_PINS;
@@ -83,7 +86,7 @@ int mcp2210_gpio_probe(struct mcp2210_device *dev)
 	gpio->names		= dev->names;
 	gpio->can_sleep		= 1; /* we have to make them sleep because we
 					need to do an URB */
-	gpio->exported		= 0; /* wtf is this anyway? */
+	gpio->exported		= 0;
 
 
 	ret = gpiochip_add(gpio);
@@ -94,6 +97,8 @@ int mcp2210_gpio_probe(struct mcp2210_device *dev)
 
 	mcp2210_info("registered GPIOs from %d to %d", gpio->base,
 		     gpio->base + gpio->ngpio - 1);
+
+	dev->s.is_gpio_probed = 1;
 
 	return 0;
 }
@@ -232,7 +237,9 @@ static int set_dir_and_value(struct gpio_chip *chip, unsigned pin, int dir,
 		pin_mode = dev->config->pins[pin].mode;
 	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
 
-	if (pin_mode != MCP2210_PIN_GPIO && pin_mode != MCP2210_PIN_UNUSED) {
+	/* treat the dedicated interrupt counter as an ordinary gpio that
+	 * clears when read?  || (pin_mode == MCP2210_PIN_DEDICATED && pin == 6)*/
+	if (pin_mode == MCP2210_PIN_GPIO) {
 		mcp2210_err("pin %u not gpio", pin);
 		return -EPERM;
 	}
@@ -312,28 +319,47 @@ static int get(struct gpio_chip *chip, unsigned offset)
 {
 	struct mcp2210_device *dev = chip2dev(chip);
 	unsigned long irqflags;
+	enum mcp2210_pin_mode mode;
 	int val;
 	int dir;
 	int ret;
 	unsigned long now = jiffies;
 	unsigned long last_poll;
-	u32 stale_usecs;
+	u32 uninitialized_var(stale_usecs);
 
 	BUG_ON(offset >= MCP2210_NUM_PINS);
 
 	mcp2210_debug();
 
 	spin_lock_irqsave(&dev->dev_spinlock, irqflags);
+		mode = dev->s.chip_settings.pin_mode[offset];
 		val = 1 & (dev->s.chip_settings.gpio_value >> offset);
 		dir = 1 & (dev->s.chip_settings.gpio_direction >> offset);
 		last_poll = dev->s.last_poll_gpio;
-		stale_usecs = dev->config->stale_gpio_usecs;
+		if (IS_ENABLED(CONFIG_MCP2210_IRQ))
+			stale_usecs = dev->config->stale_gpio_usecs;
 	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
+
+	switch (mode) {
+	case MCP2210_PIN_GPIO:
+		break;
+
+	case MCP2210_PIN_DEDICATED:
+		if (offset == 6) {
+			ret = !!dev->s.interrupt_event_counter;
+			dev->s.interrupt_event_counter = 0;
+			return ret;
+		}
+		/* fall-throguh */
+
+	default:
+		return -EINVAL;
+	};
 
 	/* If the value was read within stale_usecs microseconds, then we just
 	 * return that value */
-	if (stale_usecs && time_before(now, last_poll
-					  + usecs_to_jiffies(stale_usecs))) {
+	if (IS_ENABLED(CONFIG_MCP2210_IRQ) && stale_usecs && time_before(now,
+			last_poll + usecs_to_jiffies(stale_usecs))) {
 		return val;
 	}
 

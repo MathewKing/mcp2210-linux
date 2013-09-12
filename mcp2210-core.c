@@ -23,7 +23,9 @@
  * Incomplete list:
  * - major number from maintainer?
  * - honor cs_gpio and allow SPI where idle_cs == active_cs
- * - missing mechanism to notify external entities of changes to gpio
+ * - missing mechanism to notify external entities of changes to gpio and
+ *   the dedicated "interrupt counter" line.
+ * - honor cs_change
  *
  * Fix list:
  * - While we wont see it on x86 & little-endian arm, the flipping
@@ -43,7 +45,7 @@
  * - obey struct spi_transfer cs_change
  *
  * Tweak list:
- * - examine locking and possibly refine
+ * - examine locking and possibly (hopefully) refine
  * - better prediction of how long SPI transfers will take and appropriate
  *   scheduling so that we don't unnecessarily request a status (update: this
  *   has some stuff now, but it may need an audit)
@@ -248,7 +250,6 @@ static inline bool reschedule_delayed_work_ms(struct mcp2210_device *dev,
 					      unsigned int ms);
 static void delayed_work_callback(struct work_struct *work);
 static void timer_callback(unsigned long context);
-static int complete_poll(struct mcp2210_cmd *cmd, void *context);
 
 static int unlink_urbs(struct mcp2210_device *dev);
 static void kill_urbs(struct mcp2210_device *dev, unsigned long *irqflags);
@@ -266,11 +267,13 @@ int debug_level	  = CONFIG_MCP2210_DEBUG_INITIAL;
 int creek_enabled = IS_ENABLED(CONFIG_MCP2210_CREEK);
 int dump_urbs	  = IS_ENABLED(CONFIG_MCP2210_DEBUG);
 int dump_commands = IS_ENABLED(CONFIG_MCP2210_DEBUG_VERBOSE);
+uint pending_bytes_wait_threshold = 45;
 
 module_param(debug_level,	int, 0664);
 module_param(creek_enabled,	int, 0664);
 module_param(dump_urbs,		int, 0664);
 module_param(dump_commands,	int, 0664);
+module_param(pending_bytes_wait_threshold, uint, 0664);
 
 /******************************************************************************
  * USB Driver structs
@@ -704,10 +707,6 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	/* mark current spi config as uninitialized */
 	dev->s.cur_spi_config = -1;
 #endif
-#if 0
-	for (i = 0; i < MCP2210_NUM_PINS; ++i)
-		dev->config.pins[i].mode = MCP2210_PIN_UNUSED;
-#endif
 
 	/* Set up interrupt endpoint information. */
 	ep_end = &intf_desc->endpoint[intf_desc->desc.bNumEndpoints];
@@ -814,6 +813,7 @@ static void fail_device(struct mcp2210_device *dev, int error)
 }
 #endif
 
+
 /**
  *
  * eats new_config
@@ -825,6 +825,8 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 	unsigned i;
 	struct mcp2210_chip_settings chip_settings;
 	int ret;
+
+	might_sleep();
 
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		BUG_ON(dev->spi_master);
@@ -853,46 +855,38 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		u8 mode = dev->config->pins[i].mode;
 
-		chip_settings.pin_mode[i] = (mode != MCP2210_PIN_UNUSED)
-					  ? mode
-					  : MCP2210_PIN_GPIO;
+		chip_settings.pin_mode[i] = mode;
 		dev->names[i] = dev->config->pins[i].name;
 	}
 
 	mcp2210_add_ctl_cmd(dev, MCP2210_CMD_SET_CHIP_CONFIG, 0, &chip_settings,
-			    sizeof(chip_settings), false, GFP_ATOMIC);
+			    sizeof(chip_settings), false, GFP_KERNEL);
 
-#ifdef CONFIG_MCP2210_SPI
-	mcp2210_info("----------probing SPI----------\n");
-	ret = mcp2210_spi_probe(dev);
-	if (ret) {
-		mcp2210_err("spi probe failed: %de", ret);
-		return 0;
+	if (IS_ENABLED(CONFIG_MCP2210_GPIO)) {
+		mcp2210_info("----------probing GPIO----------\n");
+		ret = mcp2210_gpio_probe(dev);
+		if (ret) {
+			mcp2210_err("gpio probe failed: %de", ret);
+			return 0;
+		}
 	}
-	dev->s.is_spi_probed = 1;
-#endif
 
-#ifdef CONFIG_MCP2210_GPIO
-	mcp2210_info("----------probing GPIO----------\n");
-	ret = mcp2210_gpio_probe(dev);
-	if (ret) {
-		mcp2210_err("gpio probe failed: %de", ret);
-		return 0;
+	if (IS_ENABLED(CONFIG_MCP2210_IRQ)) {
+		mcp2210_info("----------probing IRQ controller----------\n");
+		ret = mcp2210_irq_probe(dev);
+		if (ret) {
+			mcp2210_err("IRQ probe failed: %de", ret);
+			return 0;
+		}
 	}
-	dev->s.is_gpio_probed = 1;
 
-	if (new_config->poll_gpio_usecs) {
-		ctl_cmd_init(dev, &dev->cmd_poll_gpio,
-			     MCP2210_CMD_GET_PIN_VALUE, 0, NULL, 0, false);
-		dev->cmd_poll_gpio.head.complete = complete_poll;
-		mcp2210_add_cmd(&dev->cmd_poll_gpio.head, false);
-	}
-#endif
-	if (new_config->poll_intr_usecs) {
-		ctl_cmd_init(dev, &dev->cmd_poll_intr,
-			     MCP2210_CMD_GET_INTERRUPTS, 0, NULL, 0, false);
-		dev->cmd_poll_intr.head.complete = complete_poll;
-		mcp2210_add_cmd(&dev->cmd_poll_intr.head, false);
+	if (IS_ENABLED(CONFIG_MCP2210_SPI)) {
+		mcp2210_info("----------probing SPI----------\n");
+		ret = mcp2210_spi_probe(dev);
+		if (ret) {
+			mcp2210_err("spi probe failed: %de", ret);
+			return 0;
+		}
 	}
 
 	if (!dev->cur_cmd)
@@ -905,7 +899,6 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 	}
 
 	mcp2210_notice("Configure successful");
-
 	return 0;
 }
 
@@ -923,6 +916,9 @@ void mcp2210_disconnect(struct usb_interface *intf)
 	cancel_delayed_work(&dev->delayed_work);
 	del_timer(&dev->timer);
 	spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
+
+	/* disable interrupt generation early */
+	mcp2210_irq_remove(dev);
 
 	/* unlink any URBs in route and wait for their completion handlers to be
 	 * called */
@@ -959,12 +955,15 @@ void mcp2210_disconnect(struct usb_interface *intf)
 	 *       transfers & clear the queues */
 	/* TODO: put USB port power back to whatever "normal" is */
 
-
+#ifdef CONFIG_MCP2210_SPI
 	if (dev->spi_master)
 		mcp2210_spi_remove(dev);
+#endif
 
+#ifdef CONFIG_MCP2210_GPIO
 	if (dev->s.is_gpio_probed)
 		mcp2210_gpio_remove(dev);
+#endif
 
 	/* TODO: free GPIO resources here */
 
@@ -985,9 +984,9 @@ static inline int u16_get_bit(unsigned bit, u16 raw)
 }
 
 /*
- * Moves delayed commands that are due to the head of the queue and returns the
- * delayed command that will be due next, or NULL if there are no (more)
- * delayed commands in the list
+ * Moves delayed commands that are due from the delayed_list to the head of the
+ * queue and stores the command that will be due next (or NULL if none) in
+ * dev->delayed_cmd.
  */
 static void process_delayed_list(struct mcp2210_device *dev)
 {
@@ -1022,16 +1021,48 @@ done:
 }
 
 /* must hold dev_spinlock */
-static void delay_cur_cmd(struct mcp2210_device *dev)
+static void push_delayed_cmd(struct mcp2210_device *dev)
 {
 	unsigned long irqflags;
 
+	BUG_ON(!dev->cur_cmd || !dev->cur_cmd->delayed);
+
 	spin_lock_irqsave(&dev->queue_spinlock, irqflags);
 	list_add_tail(&dev->cur_cmd->node, &dev->delayed_list);
-	process_delayed_list(dev);
+//	process_delayed_list(dev); // not needed, will be done in the process_commands loop
 	spin_unlock_irqrestore(&dev->queue_spinlock, irqflags);
 	dev->cur_cmd = NULL;
 }
+
+/*
+ * schedule either a delayed_work or timer to pick up a delayed command later
+ */
+static void schedule_delayed_cmd(struct mcp2210_device *dev, long *pdelay)
+{
+	struct mcp2210_cmd *cmd;
+
+	cmd = dev->cur_cmd ? dev->cur_cmd : dev->delayed_cmd;
+	if (cmd) {
+		BUG_ON(!cmd->delayed);
+		if (cmd->nonatomic) {
+			long delay;
+
+			/* avoid re-reading jiffies if we can */
+			if (!pdelay) {
+				delay = jiffdiff(jiffies, cmd->delay_until);
+				pdelay = &delay;
+			}
+
+			/* we better code for that unlikely scenario that could
+			 * really fuck things up */
+			if (unlikely(*pdelay < 0))
+				*pdelay = 0;
+			reschedule_delayed_work(dev, (unsigned long)*pdelay);
+		} else
+			mod_timer(&dev->timer, cmd->delay_until);
+	}
+}
+
 
 int process_commands(struct mcp2210_device *dev, const bool lock_held, const bool can_sleep)
 {
@@ -1090,13 +1121,6 @@ restart:
 
 	cmd = dev->cur_cmd;
 
-	/* If we have are waiting on a delayed command that is preemptable,
-	 * let's clear it and see if we can get a command that we can execute
-	 * now */
-	if (cmd && cmd->delayed && time_after(cmd->delay_until, jiffies)) {
-		dev->cur_cmd = NULL;
-	}
-
 	/* fetch a command, if needed */
 	if (!dev->cur_cmd) {
 		spin_lock(&dev->queue_spinlock);
@@ -1119,8 +1143,11 @@ restart:
 		spin_unlock(&dev->queue_spinlock);
 
 		/* If queue was empty then we're done */
-		if (!dev->cur_cmd)
-			goto queue_empty;
+		if (!dev->cur_cmd) {
+			mcp2210_debug("nothing to do");
+			schedule_delayed_cmd(dev, NULL);
+			goto exit_unlock;
+		}
 	}
 
 	cmd = dev->cur_cmd;
@@ -1142,8 +1169,19 @@ restart:
 					     "for aprx. %ums",
 					     cmd->nonatomic ? "non-" : "",
 					     jiffies_to_msecs(diff));
-				delay_cur_cmd(dev);
-				goto restart;
+
+				if (cmd->non_preemptable) {
+					/* if non-preemptable then we just
+					 * schedule somebody to pick it up
+					 * later */
+					schedule_delayed_cmd(dev, &diff);
+					goto exit_unlock;
+				} else {
+					/* if preemptable, then push it onto
+					 * the delayed_list and start over */
+					push_delayed_cmd(dev);
+					goto restart;
+				}
 			}
 
 			/* otherwise, it is now due */
@@ -1203,75 +1241,6 @@ exit_unlock:
 		spin_unlock_irqrestore(&dev->dev_spinlock, irqflags);
 
 	return ret;
-
-queue_empty:
-	mcp2210_debug("nothing to do");
-
-	cmd = dev->delayed_cmd;
-	if (cmd) {
-		if (cmd->nonatomic) {
-			long delay = jiffdiff(jiffies, cmd->delay_until);
-
-			/* we better code for that unlikely scenario that could
-			 * really fuck things up */
-			if (unlikely(delay < 0))
-				delay = 0;
-			reschedule_delayed_work(dev, (unsigned long)delay);
-		} else
-			mod_timer(&dev->timer, cmd->delay_until);
-//		else if (!timer_pending(&dev->timer) || time_after(dev->timer.expires, cmd->delay_until))
-	}
-	goto exit_unlock;
-
-}
-
-static int complete_poll(struct mcp2210_cmd *cmd_head, void *context)
-{
-	struct mcp2210_device *dev = cmd_head->dev;
-	struct mcp2210_cmd_ctl *cmd = (void*)cmd_head;
-	int enabled;
-	unsigned long interval;
-	unsigned long now = jiffies;
-
-	if (dev->dead)
-		return -EINPROGRESS;
-
-	if (cmd->req.cmd == MCP2210_CMD_GET_PIN_VALUE) {
-		enabled = dev->config->poll_gpio;
-		interval = dev->config->poll_gpio_usecs;
-		dev->s.last_poll_gpio = now;
-	} else {
-		enabled = dev->config->poll_intr;
-		interval = dev->config->poll_intr_usecs;
-		dev->s.last_poll_intr = now;
-	}
-
-	if (!enabled)
-		return 0;
-
-	if (1) {
-		unsigned long interval_j = usecs_to_jiffies(interval);
-		unsigned long next = dev->eps[EP_OUT].submit_time + interval_j;
-		cmd->head.delayed = 1;
-
-		if (jiffdiff(next, now) < 0) {
-			mcp2210_warn("poll interval collapse, restarting universe");
-			next = jiffies + interval_j;
-		}
-		cmd->head.delay_until = next;
-
-#if 0
-		mcp2210_debug("interval_j: %lu, submit_time: %lu, next: %lu, jiffies: %lu",
-			      interval_j, dev->eps[EP_OUT].submit_time, next, jiffies);
-#endif
-	} else
-		cmd->head.delayed = 0;
-
-	cmd->head.state = MCP2210_STATE_NEW;
-
-	mcp2210_add_cmd(cmd_head, false);
-
-	return -EINPROGRESS; /* tell process_commands not to free us */
 }
 
 
@@ -1530,7 +1499,7 @@ static void delayed_work_callback(struct work_struct *work)
 			if (likely(age < TIMEOUT_URB)) {
 				goto exit_reschedule;
 			} else {
-#ifdef MCP2210_QUIRKS
+#ifdef CONFIG_MCP2210_USB_QUIRKS
 #else
 #endif
 				/* timeout sending request, just fail the command */
@@ -1875,7 +1844,8 @@ bad:
 
 		if (!cmd->can_retry)
 			break;
-#ifdef MCP2210_QUIRKS
+
+#ifdef CONFIG_MCP2210_USB_QUIRKS
 # define RETRY_COUNT 8
 #else
 # define RETRY_COUNT 1

@@ -125,6 +125,83 @@ struct mcp2210_board_config *copy_board_config(
 	return dest;
 }
 
+
+
+int validate_board_config(const struct mcp2210_board_config *src,
+			  const struct mcp2210_chip_settings *chip)
+{
+	uint i;
+
+	/* validate settings & write irq data */
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
+		const struct mcp2210_pin_config *pin = &src->pins[i];
+
+		/* a few sanity checks on the chip_settings */
+		if (chip->pin_mode[i] > MCP2210_PIN_DEDICATED) {
+			printk(KERN_ERR "Invalid pin mode in chip_settings\n");
+			return -EINVAL;
+		}
+
+		if (pin->mode != chip->pin_mode[i]) {
+			printk(KERN_ERR "chip_settings don't match "
+					"board_config.\n");
+			return -EINVAL;
+		}
+
+		if (pin->mode == MCP2210_PIN_DEDICATED && i != 6
+						       && pin->has_irq) {
+			printk(KERN_ERR "Invalid: IRQ on dedicated pin other "
+					"than 6.");
+			return -EINVAL;
+		}
+	}
+
+	/* validate IRQ consumers match producers */
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
+		const struct mcp2210_pin_config *pin_a = &src->pins[i];
+		const struct mcp2210_pin_config *pin_b;
+		uint j;
+
+		if (pin_a->mode != MCP2210_PIN_SPI || !pin_a->has_irq)
+			continue;
+
+		for (j = 0; j < MCP2210_NUM_PINS; ++j) {
+			pin_b = &src->pins[j];
+			if (pin_b->mode == MCP2210_PIN_SPI)
+				continue;
+
+			if (pin_b->has_irq && pin_b->irq == pin_a->irq)
+				break;
+		}
+
+		if (j == MCP2210_NUM_PINS) {
+			printk(KERN_ERR "Invalid: spi pin %u consumes IRQ "
+					"offset %u, but no other pin produces "
+					"it.", i, pin_a->irq);
+			return -EINVAL;
+		}
+	}
+
+	/* validate spi cs_gpio */
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
+		const struct mcp2210_pin_config *pin = &src->pins[i];
+		u8 cs_gpio = pin->spi.cs_gpio;
+
+		if (pin->mode != MCP2210_PIN_SPI || !pin->spi.use_cs_gpio)
+			continue;
+
+		if (cs_gpio > MCP2210_NUM_PINS || src->pins[cs_gpio].mode
+							!= MCP2210_PIN_GPIO) {
+			printk(KERN_ERR "Invalid: spi pin %u uses gpio for "
+			       "chip select, but the specified pin (%hhu) is "
+			       "not valid or not a gpio", i, cs_gpio);
+			return -EINVAL;
+		}
+	}
+	return 0;
+}
+
+
 /******************************************************************************
  * Creek configuration scheme functions
  */
@@ -174,13 +251,19 @@ int creek_put_bits(struct bit_creek *bs, uint value, uint num_bits) {
 				? (uint)-1
 				: (uint)((1 << num_bits) - 1);
 	u8 *p = &bs->start[bs->pos / 8];
-	uint skip_bits = bs->pos % 8;
-	uint start_bits = 8 - skip_bits;
-	u8 bits;
+	uint skip_bits = bs->pos % 8;	/* count of bits existing at byte pos
+					 * points to and need to be skipped */
 
 	BUG_ON(!num_bits);
 	BUG_ON(num_bits > MAX_BITS);
 	BUG_ON(value & ~bit_mask);
+
+#if 0
+	if (num_bits == 8) {
+		printk("0x%02x %c\n", value, value & 0x7f);
+		printk("bs->pos = %u (pos %% 8 = %u)\n", (uint)bs->pos, (uint)bs->pos % 8);
+	}
+#endif
 
 	if ((bs->pos + num_bits - 1) / 8 >= bs->size) {
 		bs->overflow = 1;
@@ -188,9 +271,14 @@ int creek_put_bits(struct bit_creek *bs, uint value, uint num_bits) {
 	}
 
 	bs->pos += num_bits;
-	bits = num_bits < start_bits ? num_bits : start_bits;
-	*p++ |= (value >> (num_bits - bits)) << skip_bits;
-	num_bits -= bits;
+	if (skip_bits) {
+		uint start_bits = 8 - skip_bits;
+		u8 bits = num_bits < start_bits ? num_bits
+						: start_bits;
+
+		*p++ |= (value >> (num_bits - bits)) << skip_bits;
+		num_bits -= bits;
+	}
 
 	while(num_bits > 0) {
 		if (num_bits >= 8) {
@@ -303,6 +391,7 @@ struct mcp2210_board_config *creek_decode(
 
 	creek_debug("-------- creek_decode --------", &bs);
 
+	/* magic */
 	dec.magic[0] = creek_get_bits(&bs, 8);
 	dec.magic[1] = creek_get_bits(&bs, 8);
 	dec.magic[2] = creek_get_bits(&bs, 8);
@@ -314,6 +403,7 @@ struct mcp2210_board_config *creek_decode(
 		return ERR_PTR(-ENODEV);
 	}
 
+	/* version */
 	dec.ver = creek_get_bits(&bs, 4);
 	creek_debug("version", &bs);
 
@@ -326,50 +416,71 @@ struct mcp2210_board_config *creek_decode(
 	if (!tmp)
 		return ERR_PTR(-ENOMEM);
 
-	/* build settings */
+	/* read has_strings, validate & populate pin modes, count SPI pins */
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
-		struct mcp2210_pin_config *cfg = &tmp->pins[i];
-
-		cfg->mode = chip_settings->pin_mode[i];
-		if (cfg->mode & ~3) {
-			printk(KERN_ERR "invalid pin_mode\n");
-			return ERR_PTR(-EPROTO);
-		}
-
-		switch (cfg->mode) {
-		case MCP2210_PIN_SPI:
-			dec.spi_pin_num[dec.spi_count++] = i;
-			break;
-
-		case MCP2210_PIN_DEDICATED:
-		default:
-			break;
-		}
-	}
-
-	/* read header */
-	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
+		struct mcp2210_pin_config *pin = &tmp->pins[i];
 		u8 str_flags = creek_get_bits(&bs, 2);
 
 		dec.name_index[i]	= str_flags & 1 ? ++dec.str_count : 0;
 		dec.modalias_index[i]	= str_flags & 2 ? ++dec.str_count : 0;
+
+		switch ((pin->mode = chip_settings->pin_mode[i])) {
+		case MCP2210_PIN_GPIO:
+		case MCP2210_PIN_DEDICATED:
+			break;
+
+		case MCP2210_PIN_SPI:
+			dec.spi_pin_num[dec.spi_count++] = i;
+			break;
+
+		default:
+			printk(KERN_ERR "invalid pin_mode\n");
+			return ERR_PTR(-EPROTO);
+		};
 	}
-	creek_debug("strings present", &bs);
+	creek_debug("strings present, count SPI", &bs);
+
+	/* 3-wire capability */
+	tmp->_3wire_capable = creek_get_bits(&bs, 1);
+	if (tmp->_3wire_capable) {
+		tmp->_3wire_tx_enable_active_high = creek_get_bits(&bs, 1);
+		tmp->_3wire_tx_enable_pin = creek_get_bits(&bs, 3);
+	}
+	creek_debug("3wire", &bs);
+
+	/* read IRQs */
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
+		struct mcp2210_pin_config *pin = &tmp->pins[i];
+
+		if (pin->mode == MCP2210_PIN_DEDICATED && i != 6)
+			/* skip IRQ for dedicated pins other than 6 */
+			continue;
+
+		if ((pin->has_irq = creek_get_bits(&bs, 1))) {
+			pin->irq = creek_get_bits(&bs, 3);
+
+			if (pin->mode == MCP2210_PIN_GPIO) {
+				dec.have_gpio_irqs = 1;
+				pin->irq_type = creek_get_bits(&bs, 3);
+			}
+		}
+	}
+	creek_debug("IRQs", &bs);
 
 	/* read gpio polling settings */
-	tmp->poll_gpio = creek_get_bits(&bs, 1);
-	if (tmp->poll_gpio) {
+	if (dec.have_gpio_irqs) {
 		uint data	      = creek_get_bits(&bs, 13);
 		u32 interval	      = unpack_uint(data, 10, 3);
+
 		tmp->poll_gpio_usecs  = interval;
 		tmp->stale_gpio_usecs = unpack_uint_opt(&bs, 10, 3, interval);
 	}
 	creek_debug("gpio polling done", &bs);
 
 	/* read interrupt polling settings */
-	tmp->poll_intr = creek_get_bits(&bs, 1);
-	if (tmp->poll_intr) {
-		uint same_as_gpio = tmp->poll_gpio && creek_get_bits(&bs, 1);
+	if (tmp->pins[6].mode == MCP2210_PIN_DEDICATED && tmp->pins[6].has_irq) {
+		/* if no gpio irqs, don't read the feature bit */
+		uint same_as_gpio = dec.have_gpio_irqs && creek_get_bits(&bs, 1);
 
 		if (same_as_gpio) {
 			tmp->poll_intr_usecs  = tmp->poll_gpio_usecs;
@@ -394,6 +505,9 @@ struct mcp2210_board_config *creek_decode(
 							     MCP2210_MIN_SPEED);
 		spi->mode		   = creek_get_bits(&bs, 8);
 		spi->bits_per_word	   = 8;
+		spi->use_cs_gpio	   = creek_get_bits(&bs, 1);
+		if (spi->use_cs_gpio)
+			spi->cs_gpio	   = creek_get_bits(&bs, 3);
 		spi->cs_to_data_delay	   = unpack_uint_opt(&bs, 7, 2, 0);
 		spi->last_byte_to_cs_delay = unpack_uint_opt(&bs, 7, 2, 0);
 		spi->delay_between_bytes   = unpack_uint_opt(&bs, 7, 2, 0);
@@ -509,6 +623,13 @@ int creek_encode(const struct mcp2210_board_config *src,
 	struct creek_data data;
 	struct bit_creek bs;
 	uint i;
+	int ret;
+
+	ret = validate_board_config(src, chip);
+	if (ret) {
+		printk(KERN_ERR "Invalid configuration\n");
+		return ret;
+	}
 
 	memset(&data, 0, sizeof(data));
 	bs.start = (u8 *)dest;
@@ -529,52 +650,81 @@ int creek_encode(const struct mcp2210_board_config *src,
 	creek_put_bits(&bs, 0, 4);
 	creek_debug("version", &bs);
 
-	/* validate settings & write has_string header */
+	/* write has_string header */
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		const struct mcp2210_pin_config *pin = &src->pins[i];
+		u8 value = (!!pin->name) | (!!pin->modalias) << 1;
 
-		/* a few sanity checks on the chip_settings */
-		if (chip->pin_mode[i] & ~3) {
-			printk(KERN_ERR "chip_settings invalid\n");
-			return -EINVAL;
-		}
-		if (pin->mode != MCP2210_PIN_UNUSED && (pin->mode != chip->pin_mode[i])) {
-			printk(KERN_ERR "chip_settings don't match board_config.\n");
-			return -EINVAL;
-		}
-
-		if (pin->mode == MCP2210_PIN_SPI)
-			data.spi_pin_num[data.spi_count++] = i;
-
-		/* write "has strings" flags for name & modalias */
-		creek_put_bits(&bs, (!!pin->name) | (!!pin->modalias) << 1, 2);
+		creek_put_bits(&bs, value, 2);
 	}
 	creek_debug("strings present", &bs);
 
-	/* write gpio polling settings */
-	creek_put_bits(&bs, src->poll_gpio, 1);
-	if (src->poll_gpio) {
-		u32 interval = src->poll_gpio_usecs;
-		uint data = pack_uint(interval, 10, 3);
+	/* 3-wire capability (a gpio that functions as a tx enable) */
+	creek_put_bits(&bs, src->_3wire_capable, 1);
+	if (src->_3wire_capable) {
+		creek_put_bits(&bs, src->_3wire_tx_enable_active_high, 1);
+		creek_put_bits(&bs, src->_3wire_tx_enable_pin, 3);
+	}
+	creek_debug("3wire", &bs);
 
-		creek_put_bits(&bs, data, 13);
+	/* write irq data & count spi devices */
+	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
+		const struct mcp2210_pin_config *pin = &src->pins[i];
+
+		switch (pin->mode) {
+		case MCP2210_PIN_SPI:
+			data.spi_pin_num[data.spi_count++] = i;
+			break;
+
+		case MCP2210_PIN_DEDICATED:
+			/* skip IRQ for dedicated pins other than 6 */
+			if (i != 6)
+				continue;
+			printk(KERN_DEBUG "dedicated pin...\n");
+		};
+
+		creek_put_bits(&bs, pin->has_irq, 1);
+		printk(KERN_DEBUG "pin %u %s IRQ (pos = %u)\n", i, pin->has_irq
+				? "has" : "doesn't have", (uint)bs.pos);
+
+		if (pin->has_irq) {
+			/* write the relative IRQ value */
+			creek_put_bits(&bs, pin->irq, 3);
+
+			/* only gpio have an irq_type, the dedicated line's
+			 * type is configured via the USB interface */
+			if (pin->mode == MCP2210_PIN_GPIO) {
+				data.have_gpio_irqs = 1;
+				creek_put_bits(&bs, pin->irq_type , 3);
+			}
+		}
+	}
+	creek_debug("IRQs", &bs);
+
+	/* write gpio polling settings */
+	if (data.have_gpio_irqs) {
+		u32 interval = src->poll_gpio_usecs;
+
+		creek_put_bits(&bs, pack_uint(interval, 10, 3), 13);
 		pack_uint_opt(&bs, src->stale_gpio_usecs, 10, 3, interval);
 	}
 	creek_debug("gpio polling done", &bs);
 
 	/* write interrupt polling settings */
-	creek_put_bits(&bs, src->poll_intr, 1);
-	if (src->poll_intr) {
-		uint same_as_gpio = src->poll_gpio
+	if (src->pins[6].has_irq && src->pins[6].mode
+						== MCP2210_PIN_DEDICATED) {
+		uint same_as_gpio = data.have_gpio_irqs
 			&& src->poll_gpio_usecs  == src->poll_intr_usecs
 			&& src->stale_intr_usecs == src->stale_gpio_usecs;
 
-		creek_put_bits(&bs, same_as_gpio, 1);
+		/* if we don't have any gpio irqs we should skip this bit */
+		if (data.have_gpio_irqs)
+			creek_put_bits(&bs, same_as_gpio, 1);
+
 		if (!same_as_gpio) {
 			u32 interval = src->poll_intr_usecs;
-			uint data = pack_uint(interval, 10, 3);
 
-			creek_put_bits(&bs, data, 13);
+			creek_put_bits(&bs, pack_uint(interval, 10, 3), 13);
 			pack_uint_opt(&bs, src->stale_intr_usecs, 10, 3,
 				      interval);
 		}
@@ -591,6 +741,9 @@ int creek_encode(const struct mcp2210_board_config *src,
 		creek_put_bits(&bs, spi->mode, 8);
 		/* spi->bits_per_word should always be 8 since this chip
 		 * doesn't support any other value */
+		creek_put_bits(&bs, spi->use_cs_gpio, 1);
+		if (spi->use_cs_gpio)
+			creek_put_bits(&bs, spi->cs_gpio, 3);
 		pack_uint_opt(&bs, spi->cs_to_data_delay,	7, 2, 0);
 		pack_uint_opt(&bs, spi->last_byte_to_cs_delay,	7, 2, 0);
 		pack_uint_opt(&bs, spi->delay_between_bytes,	7, 2, 0);
@@ -736,7 +889,6 @@ static struct code_desc mcp2210_pin_modes[] = {
 	{MCP2210_PIN_GPIO,	"gpio"},
 	{MCP2210_PIN_SPI,	"spi"},
 	{MCP2210_PIN_DEDICATED,	"dedicated"},
-	{MCP2210_PIN_UNUSED,	"unused"},
 	{}
 };
 
@@ -987,12 +1139,23 @@ void dump_pin_config(const char *level, unsigned indent, const char *start,
 	const char *ind2 = get_indent(indent + 4);
 
 	printk("%s%s%s%p struct mcp2210_pin_config {\n"
-	       "%s.mode     = 0x%02hhx (%s)\n",
+	       "%s.mode     = 0x%02hhx (%s)\n"
+	       "%s.has_irq  = 0x%02hhx\n"
+	       "%s.irq      = 0x%02hhx\n"
+	       "%s.irq_type = 0x%02hhx\n",
 	       level, get_indent(indent), start, cfg,
-	       ind, cfg->mode, get_pin_mode_str(cfg->mode));
+	       ind, cfg->mode, get_pin_mode_str(cfg->mode),
+	       ind, cfg->has_irq,
+	       ind, cfg->irq,
+	       ind, cfg->irq_type);
 
-	if (cfg->mode == MCP2210_PIN_SPI) {
-		printk("%s%s.body.spi {\n"
+	switch (cfg->mode) {
+	case MCP2210_PIN_DEDICATED:
+	case MCP2210_PIN_GPIO:
+		break;
+
+	case MCP2210_PIN_SPI:
+		printk("%s%s.spi {\n"
 		       "%s.max_speed_hz          = %u\n"
 		       "%s.min_speed_hz          = %u\n"
 		       "%s.mode                  = 0x%02hhx\n"
@@ -1012,15 +1175,14 @@ void dump_pin_config(const char *level, unsigned indent, const char *start,
 		       ind2, cfg->spi.delay_between_bytes,
 		       ind2, cfg->spi.delay_between_xfers,
 		       ind);
-	}
+		break;
+	};
 
 	printk("%s%s.modalias = %s\n"
 	       "%s.name     = %s\n"
-/*	       "%s.desc     = %s\n"*/
 	       "%s}\n",
 	       level, ind, cfg->modalias,
 	       ind, cfg->name,
-/*	       ind, cfg->desc,*/
 	       get_indent(indent));
 }
 
@@ -1042,21 +1204,17 @@ void dump_board_config(const char *level, unsigned indent, const char *start,
 	}
 
 	printk("%s%s}\n"
-	       "%s.poll_gpio        = %hhu\n"
-	       "%s.poll_intr        = %hhu\n"
 	       "%s.poll_gpio_usecs  = %u\n"
-	       "%s.poll_intr_usecs  = %u\n"
 	       "%s.stale_gpio_usecs = %u\n"
+	       "%s.poll_intr_usecs  = %u\n"
 	       "%s.stale_intr_usecs = %u\n"
 	       "%s.strings_size     = %u\n"
 	       "%s.strings          = %p \"%s\"\n"
 	       "%s}\n",
 	       level, ind,
-	       ind, bc->poll_gpio,
-	       ind, bc->poll_intr,
 	       ind, (uint)bc->poll_gpio_usecs,
-	       ind, (uint)bc->poll_intr_usecs,
 	       ind, (uint)bc->stale_gpio_usecs,
+	       ind, (uint)bc->poll_intr_usecs,
 	       ind, (uint)bc->stale_intr_usecs,
 	       ind, (uint)bc->strings_size,
 	       ind, bc->strings, bc->strings,
@@ -1160,7 +1318,7 @@ void dump_cmd_head(const char *level, unsigned indent, const char *start, const 
 	       "%s  .node           = %p struct list_head {.next = %p, .prev = %p}\n"
 	       "%s  .time_queued    = %lu\n"
 	       "%s  .time_started   = %lu\n"
-	       "%s  .delay_until   = %lu\n"
+	       "%s  .delay_until    = %lu\n"
 	       "%s  .status         = %d\n"
 	       "%s  .mcp_status     = 0x%02hhx\n"
 	       "%s  .state          = %hhu (%s)\n"
@@ -1516,8 +1674,8 @@ void dump_spi_message(const char *level, unsigned indent, const char *start,
 }
 
 
-void dump_spi_device(const char *level, unsigned indent,
-		     const char *start, const struct spi_device *spi_dev)
+void dump_spi_device(const char *level, unsigned indent, const char *start,
+		     const struct spi_device *spi_dev)
 {
 	const char *ind = get_indent(indent);
 
@@ -1588,31 +1746,25 @@ void dump_cmd_spi(const char *level, unsigned indent, const char *start,
 
 	dump_cmd_head(level, indent + 2, ".head = ", cmd_head);
 	dump_spi_device(level, indent + 2, ".spi = ", cmd->spi);
-	dump_spi_transfer(level, indent + 2, ".xfer = ", cmd->xfer);
 	dump_spi_message(level, indent + 2, ".msg = ", cmd->msg);
+	dump_spi_transfer(level, indent + 2, ".xfer = ", cmd->xfer);
 
-	printk("%s%s  .spi                 = %p\n"
-	       "%s  .msg                 = %p\n"
-	       "%s  .xfer                = %p\n"
-	       "%s  .tx_pos              = %u\n"
-	       "%s  .rx_pos              = %u\n"
-	       "%s  .tx_bytes_in_process = %u\n"
-	       "%s  .spi_in_flight       = %u\n"
-	       "%s  .busy_count          = %u\n",
-	       level, ind, cmd->spi,
-	       ind, cmd->msg,
-	       ind, cmd->xfer,
-	       ind, cmd->tx_pos,
-	       ind, cmd->rx_pos,
-	       ind, cmd->tx_bytes_in_process,
-	       ind, cmd->spi_in_flight,
-	       ind, cmd->busy_count);
+	printk("%s  .pos             = %u\n"
+	       "%s  .pending_unacked = %hu\n"
+	       "%s  .pending_bytes   = %hu\n"
+	       "%s  .busy_count      = %u\n"
+	       "%s  .spi_in_flight   = %hhu\n",
+	       level, cmd->pos,
+	       ind, cmd->pending_unacked,
+	       ind, cmd->pending_bytes,
+	       ind, cmd->busy_count,
+	       ind, cmd->spi_in_flight);
 
 	if (cmd->ctl_cmd)
-		dump_cmd_ctl(level, indent + 2, ".ctl_cmd             = ",
+		dump_cmd_ctl(level, indent + 2, ".ctl_cmd = ",
 			     &cmd->ctl_cmd->head);
 	else
-		printk("%s%s  .ctl_cmd             = (null)\n", level, ind);
+		printk("%s%s  .ctl_cmd         = (null)\n", level, ind);
 
 	printk("%s%s}\n", level, ind);
 }
