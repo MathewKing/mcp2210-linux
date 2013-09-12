@@ -443,6 +443,7 @@ struct mcp2210_cmd_ctl *mcp2210_alloc_ctl_cmd(struct mcp2210_device *dev,
 	return cmd;
 }
 
+#ifdef CONFIG_MCP2210_SPI
 static void calculate_active_cs(const struct mcp2210_device *dev,
 				const struct spi_device *spi, u8 pin,
 				u16 *active_cs, u16 *idle_cs)
@@ -524,4 +525,5 @@ void calculate_spi_settings(struct mcp2210_spi_xfer_settings *dest,
 		dest->delay_between_bytes	= cfg->delay_between_bytes;
 	}
 }
+#endif /* CONFIG_MCP2210_SPI */
 

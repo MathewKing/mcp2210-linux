@@ -1263,7 +1263,9 @@ void dump_dev(const char *level, unsigned indent, const char *start,
 	       "%s.intf            = %p\n"
 	       "%s.spi_master      = %p\n"
 //	       "%s.gpio_chip       = %p\n"
+#ifdef CONFIG_MCP2210_SPI
 	       "%s.dev_spinlock    = %slocked\n"
+#endif
 	       "%s.queue_spinlock  = %slocked\n"
 #ifdef CONFIG_MCP2210_DEBUG
 	       "%s.manager_running = %d\n"
@@ -1273,7 +1275,9 @@ void dump_dev(const char *level, unsigned indent, const char *start,
 	       level, get_indent(indent), start, dev,
 	       ind, dev->udev,
 	       ind, dev->intf,
+#ifdef CONFIG_MCP2210_SPI
 	       ind, dev->spi_master,
+#endif
 //	       ind, dev->gpio_chip,
 	       ind, spin_is_locked((struct spinlock*)&dev->dev_spinlock)
 		    ? "" : "un",

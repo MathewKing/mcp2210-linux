@@ -360,6 +360,18 @@ exit_free:
 	return ret;
 }
 
+#ifndef CONFIG_MCP2210_CREEK
+static int encode(int argc, char *argv[]) {
+	fprintf(stderr, "Feature disabled (set CONFIG_MCP2210_CREEK to enable)\n");
+	return -EPERM;
+}
+
+static int decode(int argc, char *argv[]) {
+	return encode(argc, argv);
+}
+
+#else /* CONFIG_MCP2210_CREEK */
+
 static int encode(int argc, char *argv[]) {
 	struct mcp2210_board_config *board_config;
 	u8 buf[0x100];
@@ -414,6 +426,7 @@ static int decode(int argc, char *argv[]) {
 	free(board_config);
 	return 0;
 }
+#endif /* CONFIG_MCP2210_CREEK */
 
 enum settings_mask {
 	SETTINGS_CHIP_SETTINGS		= 1 << 0,

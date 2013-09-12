@@ -743,6 +743,9 @@ struct mcp2210_device {
 
 	struct list_head cmd_queue;
 	struct mcp2210_cmd *cur_cmd;
+	struct list_head delayed_list;
+	struct mcp2210_cmd *delayed_cmd;
+	struct timer_list timer;
 	struct mcp2210_endpoint eps[2];
 
 	struct delayed_work delayed_work;
@@ -759,19 +762,18 @@ struct mcp2210_device {
 	u8 eeprom_cache[256];
 #endif
 	const char *names[MCP2210_NUM_PINS];
-#if CONFIG_MCP2210_GPIO
+#ifdef CONFIG_MCP2210_GPIO
 	struct gpio_chip gpio;
 #endif
 
-#if CONFIG_MCP2210_SPI
+#ifdef CONFIG_MCP2210_SPI
 	struct spi_master *spi_master;
 	struct spi_device *chips[MCP2210_NUM_PINS];
+#else
+	char spi_master; /* tmp hack */
 #endif
 
 #ifdef CONFIG_MCP2210_IRQ
-	struct list_head delayed_list;
-	struct mcp2210_cmd *delayed_cmd;
-	struct timer_list timer;
 	struct mutex irq_lock;
 	u16 irq_mask;
 	u16 irq_stat;
@@ -834,13 +836,13 @@ long mcp2210_ioctl(struct file *file, unsigned int request, unsigned long arg);
 /*****************************************************************************
  * mcp2210-spi.c
  */
-#ifdef CONFIG_MCP2210_GPIO
+#ifdef CONFIG_MCP2210_SPI
 int  mcp2210_spi_probe (struct mcp2210_device *dev);
 void mcp2210_spi_remove(struct mcp2210_device *dev);
 #else
 static inline int  mcp2210_spi_probe (struct mcp2210_device *dev) {return 0;}
 static inline void mcp2210_spi_remove(struct mcp2210_device *dev) {}
-#endif /* CONFIG_MCP2210_GPIO */
+#endif /* CONFIG_MCP2210_SPI */
 
 
 /*****************************************************************************
@@ -886,14 +888,8 @@ mcp2210_eeprom_write(struct mcp2210_device *dev, const u8 *src, u8 addr,
 int  mcp2210_irq_probe (struct mcp2210_device *dev);
 void mcp2210_irq_remove(struct mcp2210_device *dev);
 int mcp2210_gpio_to_irq(struct gpio_chip *chip, unsigned offset);
-#else
-static inline int  mcp2210_irq_probe (struct mcp2210_device *dev) {return 0;}
-static inline void mcp2210_irq_remove(struct mcp2210_device *dev) {}
-#endif /* CONFIG_MCP2210_IRQ */
-
 void _mcp2210_irq_do_gpio(struct mcp2210_device *dev, u16 old_val, u16 new_val);
 void _mcp2210_irq_do_intr_counter(struct mcp2210_device *dev, u16 count);
-
 static inline void mcp2210_irq_do_gpio(struct mcp2210_device *dev,
 				       u16 old_val, u16 new_val)
 {
@@ -907,8 +903,14 @@ static inline void mcp2210_irq_do_intr_counter(struct mcp2210_device *dev,
 	if (count)
 		_mcp2210_irq_do_intr_counter(dev, count);
 }
-
-
+#else
+static inline int  mcp2210_irq_probe (struct mcp2210_device *dev) {return 0;}
+static inline void mcp2210_irq_remove(struct mcp2210_device *dev) {}
+static inline void mcp2210_irq_do_gpio(struct mcp2210_device *dev,
+				       u16 old_val, u16 new_val) {}
+static inline void mcp2210_irq_do_intr_counter(struct mcp2210_device *dev,
+					       u16 count) {}
+#endif /* CONFIG_MCP2210_IRQ */
 
 /*****************************************************************************
  * inlines

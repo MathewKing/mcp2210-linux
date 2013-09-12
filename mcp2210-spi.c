@@ -26,6 +26,7 @@
 #include "mcp2210.h"
 #include "mcp2210-debug.h"
 
+#ifdef CONFIG_MCP2210_SPI
 
 /* The non-queued mechanism will supposedly be phased out in the future.
  * However, we don't get any benefit from the new API since we just queue
@@ -790,3 +791,4 @@ static int spi_complete_cmd(struct mcp2210_cmd *cmd_head, void *context)
 	return 0;
 }
 
+#endif /* CONFIG_MCP2210_SPI */

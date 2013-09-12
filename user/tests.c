@@ -23,6 +23,21 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#ifndef CONFIG_MCP2210_CREEK
+static int feature_disabled(void) {
+	fprintf(stderr, "Feature disabled (set CONFIG_MCP2210_CREEK to enable)\n");
+	return -EPERM;
+}
+
+int test_encoding(int argc, char *argv[]) {
+	return feature_disabled();
+}
+
+int test_bit_stream(int argc, char *argv[]) {
+	return feature_disabled();
+}
+
+#else /* CONFIG_MCP2210_CREEK */
 
 static int compare_board_config(const struct mcp2210_board_config *a,
 				const struct mcp2210_board_config *b) {
@@ -106,7 +121,6 @@ static void print_failed_item(int val) {
 		fprintf(stderr, "pin %u, %s", pin, item);
 	}
 }
-
 
 int test_encoding(int argc, char *argv[]) {
 	struct mcp2210_board_config *board_config;
@@ -240,3 +254,4 @@ int test_bit_stream(int argc, char *argv[])
 	fprintf(stderr, "Success\n");
 	return 0;
 }
+#endif /* CONFIG_MCP2210_CREEK */

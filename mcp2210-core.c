@@ -761,9 +761,8 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		goto error2;
 	}
 
-	/* compile-out if not enabled in config, but still check current
-	 * module param */
-	if (IS_ENABLED(CONFIG_MCP2210_CREEK) && creek_enabled) {
+#ifdef CONFIG_MCP2210_CREEK
+	if (creek_enabled) {
 		/* read the first 4 bytes to see if we have our magic number */
 		ret = mcp2210_eeprom_read(dev, NULL, 0, 4, eeprom_read_complete, dev, GFP_KERNEL);
 		if (ret && ret != -EINPROGRESS) {
@@ -771,6 +770,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 			goto error2;
 		}
 	}
+#endif
 
 	/* start up background cleanup thread */
 	schedule_delayed_work(&dev->delayed_work, msecs_to_jiffies(1000));
