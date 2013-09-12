@@ -16,15 +16,26 @@ config MCP2210
 
 	  If unsure, say n.
 
+config MCP2210_IOCTL
+	bool "Enable ioctl control support"
+	depends on MCP2210
+	default y
+	help
+	  Say yes here to build support for an ioctl control interface. This
+	  creates a node under /dev named usb2spi_bridge<x>. See
+	  Documentation/mfd/mcp2210.
+
+	  If unsure, say y.
+
 config MCP2210_SPI
 	bool "Enable SPI support"
 	depends on MCP2210
 	select SPI
 	default y
 	help
-	  Build support for using the MCP2210 as an SPI master. You can disable
-	  this if you only want to use the device as a GPIO expander and want
-	  to save (TODO)kb.
+	  Say yes here to build support for using the MCP2210 as an SPI master,
+	  This options exists for those who just want to use it as a gpio
+	  expander and saves you (TODO)kb.
 
 	  If unsure, say y.
 
@@ -34,17 +45,9 @@ config MCP2210_GPIO
 	select GPIOLIB
 	default y
 	help
-	  Build support for using the device's GPIO lines. Disable to save
-	  (TODO)kb.
-
-	  If unsure, say y.
-
-config MCP2210_GPIO_POLLING
-	bool "Enable GPIO support"
-	depends on MCP2210_GPIO
-	default y
-	help
-	  Build support for polling gpio input lines and producing 
+	  Say yes here to build support for using the device's GPIO lines. This
+	  option is not required to use gpio from userspace via the ioctl
+	  interface. Disabling saves (TODO)kb.
 
 	  If unsure, say y.
 
@@ -76,12 +79,14 @@ config MCP2210_CREEK
 
 	  If unsure, say y.
 
-config MCP2210_QUIRKS
-	bool "Enable work-arounds for quirky USB host drivers"
-	depends on MCP2210
+config MCP2210_IRQ
+	bool "Interrupt controller support for MCP2210"
+	depends on MCP2210 && GENERIC_HARDIRQS
+	default n
 	help
-	  Builds countermeasures for quirky USB host drivers like the BCM2835
-	  used on the Raspberry Pi.
+	  Say yes here to enable the MCP2210 to be used as a psudo-interrupt
+	  controller, generating local interrupts as a response to changes
+	  on the remote device.
 
 	  If unsure, say n.
 
@@ -115,11 +120,12 @@ config MCP2210_DEBUG_INITIAL
 	  The initial debug level for this driver.  You can change via
 	  /sys/module/mcp2210/parameters/debug.
 
-config MCP2210_IOCTL
-	bool "ioctl support"
+config MCP2210_USB_QUIRKS
+	bool "Enable work-arounds for quirky USB host drivers"
 	depends on MCP2210
-	default y
 	help
-	  TODO
+	  Builds countermeasures for quirky USB host drivers like the BCM2835
+	  used on the Raspberry Pi to help it function better.
 
-	  If unsure, say y.
+	  If unsure, say n.
+
