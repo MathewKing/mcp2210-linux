@@ -124,10 +124,10 @@ static struct config {
 	},
 	.spi = {
 		.name		= "/dev/spidev1.1",
-		.mode		= 0,
-		.speed_hz	= 0,
+		.mode		= 3,
+		.speed_hz	= 100 * 1000,
 		.delay_usecs	= 0,
-		.bits_per_word	= 0,
+		.bits_per_word	= 8,
 		.cs_change	= 0,
 	},
 };
@@ -271,6 +271,31 @@ int get_input_data(void *dest, size_t size, int short_read_ok) {
 	return ret;
 }
 
+/* what a crappy fn name... */
+int get_input_data2(void **dest, size_t size) {
+	int ret;
+
+	if (!size)
+		size = 0x8000;
+
+	*dest = malloc(size);
+	if (!*dest)
+		return -ENOMEM;
+
+	ret = get_input_data(*dest, size, 1);
+
+	if (ret < 0) {
+		free(*dest);
+		*dest = NULL;
+	} else {
+		size = (size_t)ret;
+		*dest = realloc(*dest, size);
+	}
+
+	return ret;
+}
+
+
 int put_output_data(const void *src, size_t size, int append) {
 	const char *file_name = config.fileout;
 	int use_stdout = !file_name || !strcmp(file_name, "-");
@@ -376,7 +401,7 @@ static int encode(int argc, char *argv[]) {
 	struct mcp2210_board_config *board_config;
 	u8 buf[0x100];
 	uint size;
-	int ret;
+	int ret = 0;
 
 	memset(buf, 0, sizeof(buf));
 	board_config = copy_board_config(NULL, &my_board_config, 0);
@@ -534,8 +559,8 @@ static int eeprom_read_write(int is_read, int argc, char *argv[]) {
 	struct mcp2210_ioctl_data *data;
 	struct mcp2210_ioctl_data_eeprom *eeprom;
 	const size_t struct_size = IOCTL_DATA_EEPROM_SIZE + 0x100;
-	uint addr;
-	uint size;
+	uint addr = 0;
+	uint size = 0;
 	int i;
 	int ret = 0;
 
@@ -600,7 +625,7 @@ struct spi_msg {
 struct spi_msg *parse_msgs(int argc, char *argv[]) {
 	size_t size;
 	const char *p;
-	struct spi_msg *msg;
+	struct spi_msg *msg = NULL;
 	unsigned next_buf_off;
 	struct spi_ioc_transfer *xfer;
 	struct spi_msg proto;
@@ -744,7 +769,8 @@ struct spi_msg *parse_msgs(int argc, char *argv[]) {
 
 exit_bad_fmt:
 	fprintf(stderr, "bad msg format");
-	free (msg);
+	if (msg)
+		free (msg);
 	return ERR_PTR(-EINVAL);
 }
 
@@ -784,6 +810,53 @@ static __always_inline void _spidev_set(int fd, unsigned long request, void *val
 }
 
 struct spi_msg *get_msg_from_file(void) {
+	struct spi_msg *msg;
+	void *data;
+	u8 *tx_buf;
+	u8 *rx_buf;
+	size_t data_size;
+	size_t struct_size;
+	int ret;
+
+	ret = get_input_data2(&data, 0x8000);
+
+	if (ret < 0)
+		return NULL;
+
+	data_size = (size_t)ret;
+
+	/* the spi_msg, a struct spi_ioc_transfer payload and then two buffers
+	 * for the data */
+	struct_size = sizeof(*msg)
+		    + sizeof(struct spi_ioc_transfer)
+		    + data_size * 2;
+
+	msg = malloc(struct_size);
+	if (!msg)
+		goto error_free;
+
+	memset(msg, 0, struct_size);
+
+	tx_buf = &((u8*)msg)[struct_size - data_size * 2];
+	rx_buf = &((u8*)msg)[struct_size - data_size];
+
+	msg->struct_size	  = struct_size;
+	msg->buf		  = data;
+	msg->buf_size		  = (size_t)ret;
+	msg->num_xfers		  = 1;
+	msg->xfers->tx_buf	  = (ulong)memcpy(tx_buf, data, data_size);
+	msg->xfers->rx_buf	  = (ulong)memset(rx_buf, 0, data_size);
+	msg->xfers->len		  = data_size;
+	msg->xfers->speed_hz	  = config.spi.speed_hz;
+	msg->xfers->delay_usecs	  = config.spi.delay_usecs;
+	msg->xfers->bits_per_word = config.spi.bits_per_word;
+	msg->xfers->cs_change	  = config.spi.cs_change;
+
+	return msg;
+
+error_free:
+	free(data);
+	free(msg);
 	return NULL;
 }
 
@@ -812,6 +885,9 @@ static int spidev_send(int argc, char *argv[]) {
 		}
 	} else
 		msg = get_msg_from_file();
+
+	if (!msg)
+		return -ENOMEM;
 
 	for (i = 0; i < msg->num_xfers; ++i) {
 		fprintf(stderr, "request %d:\n", i);

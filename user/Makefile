@@ -1,4 +1,4 @@
-CFLAGS		?= -O0 -pipe -g3
+CFLAGS		?= -O2 -pipe -g3
 CXXFLAGS	?= $(CFLAGS)
 WARN_FLAGS	 = -Wall -Wextra -Werror -Wcast-align -Wno-unused-parameter \
 		   -Wno-missing-field-initializers -Wstrict-prototypes \

@@ -672,8 +672,6 @@ static int spi_complete_urb(struct mcp2210_cmd *cmd_head)
 		cmd->msg->actual_length += len;
 	}
 
-	dump_cmd_spi(KERN_DEBUG, 0, "fuck ", cmd_head);
-
 	/* check if xfer is finished */
 	if(cmd->pos == cmd->xfer->len) {
 		struct list_head *next = cmd->xfer->transfer_list.next;
