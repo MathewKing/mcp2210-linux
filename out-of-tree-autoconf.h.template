@@ -12,10 +12,11 @@
  * gcc-style -include files */
 #ifdef __KERNEL__
 # undef __KERNEL__
+#elif !defined(__USER__)
+# include <generated/autoconf.h>
 #endif
 #ifndef __USER__
 # define __KERNEL__
-# include <generated/autoconf.h>
 #endif
 
 /* like include/generated/autoconf.h from the kernel tree, comment out what you
@@ -27,7 +28,7 @@
 #define CONFIG_MCP2210_GPIO		1
 #define CONFIG_MCP2210_EEPROM		1
 #define CONFIG_MCP2210_CREEK		1
-#define CONFIG_MCP2210_IRQ		1
+//#define CONFIG_MCP2210_IRQ		1
 #define CONFIG_MCP2210_DEBUG		1
 #define CONFIG_MCP2210_DEBUG_VERBOSE	1
 #define CONFIG_MCP2210_DEBUG_INITIAL	9
