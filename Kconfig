@@ -23,7 +23,8 @@ config MCP2210_IOCTL
 	help
 	  Say yes here to build support for an ioctl control interface. This
 	  creates a node under /dev named usb2spi_bridge<x>. See
-	  Documentation/mfd/mcp2210.
+	  Documentation/mfd/mcp2210 (which doesn't yet exist) to enter
+	  alternate dimension.
 
 	  If unsure, say y.
 
@@ -57,8 +58,8 @@ config MCP2210_EEPROM
 	default y
 	help
 	  The MCP2210 has 256 bytes of user-EEPROM.  Enabling this builds
-	  support for reading & writing this memory via ioctls
-	  (see Documentation/mfd/mcp2210).
+	  support for reading & writing this memory via ioctls and is required
+	  to use the Creek auto-configuration.
 
 	  If unsure, say y.
 
@@ -107,7 +108,7 @@ config MCP2210_DEBUG_VERBOSE
 	help
 	  If you say yes here you enable verbose debug messages (including dump
 	  of structs & messages).  This will increase the data & text by about
-	  (TODO)kb.  Unless you are debugging the MCP2210 driver, you probably
+	  (TODO)kb. Unless you are debugging the MCP2210 driver, you probably
 	  don't need this.
 
 	  If unsure, say n.
@@ -118,7 +119,7 @@ config MCP2210_DEBUG_INITIAL
 	default 7
 	help
 	  The initial debug level for this driver.  You can change via
-	  /sys/module/mcp2210/parameters/debug.
+	  /sys/module/mcp2210/parameters/debug_level.
 
 config MCP2210_USB_QUIRKS
 	bool "Enable work-arounds for quirky USB host drivers"
