@@ -26,9 +26,19 @@
 #include "mcp2210.h"
 #include "mcp2210-debug.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0)
+# define HAVE_GET_DIRECTION 1
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,35)
+# define HAVE_SET_DEBOUNCE 1
+#endif
+
 //static int  request	    (struct gpio_chip *chip, unsigned offset);
 //static void free	    (struct gpio_chip *chip, unsigned offset);
+#ifdef HAVE_GET_DIRECTION
 static int  get_direction   (struct gpio_chip *chip, unsigned offset);
+#endif
 static int  direction_input (struct gpio_chip *chip, unsigned offset);
 static int  get		    (struct gpio_chip *chip, unsigned offset);
 static int  direction_output(struct gpio_chip *chip, unsigned offset, int value);
@@ -67,23 +77,25 @@ int mcp2210_gpio_probe(struct mcp2210_device *dev)
 
 	gpio->request		= NULL;
 	gpio->free		= NULL;
+#ifdef HAVE_GET_DIRECTION
 	gpio->get_direction	= get_direction;
+#endif
 	gpio->direction_input	= direction_input;
 	gpio->get		= get;
 	gpio->direction_output	= direction_output;
+#ifdef HAVE_SET_DEBOUNCE
 	gpio->set_debounce	= NULL;
+#endif
 	gpio->set		= set;
 #ifdef CONFIG_MCP2210_IRQ
 	gpio->to_irq		= mcp2210_gpio_to_irq;
-#else
-	gpio->to_irq		= NULL;
 #endif
 	gpio->dbg_show		= NULL;
 
 	gpio->base		= -1; /* request dynamic ID allocation */
 	gpio->ngpio		= MCP2210_NUM_PINS;
 	/* private: gpio->desc */
-	gpio->names		= dev->names;
+	gpio->names		= (void*)dev->names; /* older kernels use char** */
 	gpio->can_sleep		= 1; /* we have to make them sleep because we
 					need to do an URB */
 	gpio->exported		= 0;
@@ -197,6 +209,7 @@ static int do_gpio_cmd(struct mcp2210_device *dev, u8 cmd_code, void *body,
 	return c.gpio_val_dir;
 }
 
+#ifdef HAVE_GET_DIRECTION
 static int get_direction(struct gpio_chip *chip, unsigned offset)
 {
 	struct mcp2210_device *dev = chip2dev(chip);
@@ -212,6 +225,7 @@ static int get_direction(struct gpio_chip *chip, unsigned offset)
 
 	return ret;
 }
+#endif
 
 static int set_dir_and_value(struct gpio_chip *chip, unsigned pin, int dir,
 			     int value)

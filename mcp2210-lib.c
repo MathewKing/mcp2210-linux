@@ -22,7 +22,6 @@
 #ifdef __KERNEL__
 # include <linux/kernel.h>
 # include <linux/errno.h>
-# include <linux/export.h>
 # include <linux/module.h>
 # include <linux/ctype.h>
 #else

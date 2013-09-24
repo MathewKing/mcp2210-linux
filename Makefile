@@ -4,7 +4,7 @@
 # Derived from the good-ole LDD3 Makefile
 #
 
-EXTRA_CFLAGS += -Werror -Wall -Wunused-macros $(CONFIG)
+EXTRA_CFLAGS += -Wall -Werror -Wunused-macros
 
 # To build modules outside of the kernel tree, we run "make"
 # in the kernel source tree; the Makefile these then includes this
@@ -49,6 +49,12 @@ else
 
     # When building out-of-tree, we need a way to get our config macros
     KBUILD_CPPFLAGS += -include $(PWD)/out-of-tree-autoconf.h
+
+    # Many kernels < v3.0 will produce loads of spam with
+    # -Wunused-but-set-variable set
+    ifeq ($(VERSION),2)
+        EXTRA_CFLAGS += -Wno-unused-but-set-variable
+    endif
 
     CONFIG_MCP2210 ?= m
     mcp2210-objs := mcp2210-core.o mcp2210-ioctl.o mcp2210-ctl.o \

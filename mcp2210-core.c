@@ -226,7 +226,6 @@ out of date info:
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/usb.h>
-#include <linux/export.h>
 #include <linux/workqueue.h>
 #include <linux/uaccess.h>
 //#include <linux/completion.h>
@@ -237,6 +236,10 @@ out of date info:
 #ifdef CONFIG_MCP2210_CREEK
 # include "mcp2210-creek.h"
 #endif /* CONFIG_MCP2210_CREEK */
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
+# define HAVE_USB_ALLOC_COHERENT 1
+#endif
 
 static void mcp2210_delete(struct kref *kref);
 static int mcp2210_probe(struct usb_interface *intf,
@@ -470,8 +473,16 @@ static __always_inline int init_endpoint(struct mcp2210_device *dev,
 		return -ENOMEM;
 	}
 
+	/* If we have usb_alloc_coherent, we'll use that.  Otherwise, we'll let
+	 * the usb host controller driver allocate a DMA buffer if it needs one
+	 */
+#ifdef HAVE_USB_ALLOC_COHERENT
 	dest->buffer = usb_alloc_coherent(dev->udev, 64, GFP_KERNEL,
 					  &urb->transfer_dma);
+	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+#else
+	dest->buffer = kzalloc(64, GFP_KERNEL);
+#endif
 	if (unlikely(!dest->buffer)) {
 		usb_free_urb(urb);
 		mcp2210_err("Failed to alloc %s URB DMA buffer\n",
@@ -488,7 +499,6 @@ static __always_inline int init_endpoint(struct mcp2210_device *dev,
 			complete_urb,
 			dev,
 			ep->desc.bInterval);
-	urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 	/* well, this isn't really helpful, but usb_host_endpoint ptr will
 	 * eventually replace pipe and usb_submit_urb() will have to
 	 * populate this later anyway */
@@ -512,8 +522,13 @@ static void mcp2210_delete(struct kref *kref)
 	for (ep = dev->eps; ep < &dev->eps[2]; ++ep) {
 		if (ep->urb) {
 			if (ep->buffer)
+#ifdef HAVE_USB_ALLOC_COHERENT
 				usb_free_coherent(dev->udev, 64, ep->buffer,
-						ep->urb->transfer_dma);
+						  ep->urb->transfer_dma);
+#else
+				kfree(ep->buffer);
+#endif
+
 			usb_free_urb(ep->urb);
 		}
 	}

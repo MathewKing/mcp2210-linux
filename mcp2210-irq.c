@@ -18,16 +18,15 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#ifdef CONFIG_MCP2210_IRQ
 
 #include <linux/irqdomain.h>
-//#include <linux/gpio.h>
 #include <linux/irq.h>
 
 #include "mcp2210.h"
 #include "mcp2210-debug.h"
 
 
-#ifdef CONFIG_MCP2210_IRQ
 
 static int complete_poll(struct mcp2210_cmd *cmd, void *context);
 static int mcp2210_irq_map(struct irq_domain *domain, unsigned int irq,

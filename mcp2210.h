@@ -22,12 +22,18 @@
 
 #ifndef _MCP2210_H
 #define _MCP2210_H
+
+#ifndef __GNUC__
+# error mcp2210 driver only supports gcc as compiler
+#endif
+
 #ifndef __KERNEL__
 # include "out-of-tree-autoconf.h"
 #endif
 
 #ifdef __KERNEL__
-# include <linux/kconfig.h>
+# include <linux/kernel.h>
+# include <linux/version.h>
 # include <linux/types.h>
 # include <linux/device.h>
 # include <linux/mutex.h>
@@ -38,6 +44,21 @@
 # include <linux/gpio.h>
 # include <linux/timer.h>
 # include <linux/jiffies.h>
+
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(3,1,0)
+#  include <linux/kconfig.h>
+# endif
+
+/* BUILD_BUG_ON broken somewhere prior to 3.0 */
+# if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0) && defined(BUILD_BUG_ON)
+#  undef BUILD_BUG_ON
+# endif
+
+/* spin_is_locked broken somewhere prior to 2.6.34 */
+# include <linux/spinlock.h>
+# if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34) && defined(spin_is_locked)
+#  undef spin_is_locked
+# endif
 #else
 # include <stdint.h>
 # include <stddef.h>
@@ -54,12 +75,45 @@
 extern "C" {
 #endif /* __cplusplus */
 
+/* hack for IS_ENABLED macro for both userspace and pre 3.1 kernels */
+#ifndef IS_ENABLED
+# define __ARG_PLACEHOLDER_1 0,
+# define config_enabled(cfg) _config_enabled(cfg)
+# define _config_enabled(value) __config_enabled(__ARG_PLACEHOLDER_##value)
+# define __config_enabled(arg1_or_junk) ___config_enabled(arg1_or_junk 1, 0)
+# define ___config_enabled(__ignored, val, ...) val
+# define IS_ENABLED(option) \
+	(config_enabled(option) || config_enabled(option##_MODULE))
+#endif /* IS_ENABLED */
+
+
+/* if no good BUILD_BUG_ON() then just use BUG_BUG */
+#ifndef BUILD_BUG_ON
+# define BUILD_BUG_ON(cond) BUG_ON(cond)
+#endif
+
+#ifndef spin_is_locked
+# define spin_is_locked(spinlock) 0
+#endif
+
+#ifndef GCC_VERSION
+# define GCC_VERSION (__GNUC__ * 10000 \
+		    + __GNUC_MINOR__ * 100 \
+		    + __GNUC_PATCHLEVEL__)
+#endif
+
+#ifndef __compiletime_warning
+# if GCC_VERSION  >= 40300
+#  define __compiletime_warning(msg) __attribute__((warning(msg)))
+# else
+#  define __compiletime_warning(msg)
+# endif
+#endif
 
 #ifndef __KERNEL__
 /* macros, typedefs & hacks for userspace compliation */
 # define BUG()			assert(0)
 # define BUG_ON(cond)		assert(!(cond))
-# define BUILD_BUG_ON(cond)	BUG_ON(cond)
 # define EXPORT_SYMBOL_GPL(symbol)
 # define le32_to_cpu(v)		(v)
 # define cpu_to_le32(v)		(v)
@@ -69,7 +123,6 @@ extern "C" {
 # define KERN_INFO		""
 # define KERN_DEBUG		""
 # define GFP_KERNEL		0
-# define IS_ENABLED(a)		1
 # define likely(cond)		(cond)
 # define unlikely(cond)		(cond)
 # define IS_ERR_VALUE(x) unlikely((unsigned long)(x) >= (unsigned long)-200)
@@ -109,7 +162,6 @@ static inline long IS_ERR(const void *ptr)		{return IS_ERR_VALUE((unsigned long)
 static inline long IS_ERR_OR_NULL(const void *ptr)	{return !ptr || IS_ERR_VALUE((unsigned long)ptr);}
 
 #endif /* __KERNEL__ */
-
 
 #define USB_VENDOR_ID_MICROCHIP	0x04d8
 #define USB_DEVICE_ID_MCP2210	0x00de

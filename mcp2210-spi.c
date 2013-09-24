@@ -34,8 +34,12 @@
  * the old SPI transfer() mechanism is phased out, we can modify the below
  * KERNEL_VERSION() check.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,99,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,4,0)
 # define USE_SPI_QUEUE 1
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0)
+# define HAVE_SPI_CS_GPIO 1
 #endif
 
 static int spi_submit_prepare(struct mcp2210_cmd *cmd_head);
@@ -152,12 +156,14 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 		chip->mode	    = cfg->spi.mode;
 		chip->bits_per_word = cfg->spi.bits_per_word;
 
-#ifdef CONFIG_MCP2210_GPIO
+#ifdef HAVE_SPI_CS_GPIO
+# ifdef CONFIG_MCP2210_GPIO
 		if (cfg->spi.use_cs_gpio)
 			chip->cs_gpio = dev->gpio.base + cfg->spi.cs_gpio;
 		else
-#endif
+# endif
 			chip->cs_gpio = -EINVAL;
+#endif /* HAVE_SPI_CS_GPIO */
 
 #ifdef CONFIG_MCP2210_IRQ
 		if (cfg->has_irq)

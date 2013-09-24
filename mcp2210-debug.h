@@ -25,7 +25,7 @@
 #include "mcp2210.h"
 
 #ifdef __KERNEL__
-# include <linux/printk.h>
+# include <linux/kernel.h>
 # include <linux/device.h>
 #endif
 

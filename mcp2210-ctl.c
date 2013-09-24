@@ -20,7 +20,6 @@
 
 #include <linux/slab.h>
 #include <linux/usb.h>
-#include <linux/export.h>
 #include <linux/workqueue.h>
 
 #include "mcp2210.h"
