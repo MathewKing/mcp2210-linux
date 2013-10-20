@@ -68,6 +68,19 @@ At the very least, your `KERNELDIR` should have a valid `.config` and you should
 
 You don't need to make `mcp2210.s` if you don't care to examine the disassembly. The `CFLAGS` supplied when building the userspace program aren't inferred if not supplied (although it really doesn't contain any floating point calculations at the moment).  I use `-j4` because I have a quad core processor, tune to your preferences.  Finally, there is a lot of hard-coded crap in the `Makefile` (The `Kconfig` only exists for future integration into the mainline kernel tree).
 
+Installing the Driver
+=====================
+Aside from the usual modprobe/insmod, this part is unfortunately a pain in the ass. This is because the hid-generic driver uses these values to select its devices:
+
+```
+static const struct hid_device_id hid_table[] = {
+    { HID_DEVICE(HID_BUS_ANY, HID_GROUP_GENERIC, HID_ANY_ID, HID_ANY_ID) },
+    { }
+};
+```
+
+This prevents the mcp2210 driver from being selected as a candidate, even if the vid/pid explicitly match.  Currently, the work-around is to run the script `user/mcp2210_bind.sh` as root (you must have sysfs mounted).  This uses sysfs files to tell the usbhid driver to unbind from the mcp2210 device so that the mcp2210 driver can probe it. If you know of a way to do this via udev rules, please notify me (just create an issue via the issue tracker).
+
 Configuration & Setup
 =====================
 As you may be aware, SPI does not offer a mechanism to automatically detect and configure peripherals. Typically, a particular chip is hard-wired to an SPI master and the driver for that master knows whats conntect to it.  In Linux, SPI slave devices are configred via [`struct spi_board_info`](https://www.kernel.org/doc/htmldocs/device-drivers/API-struct-spi-board-info.html) objects.  But for USB-to-SPI protocol bridges like the MCP2210, we can't know how its board is wired -- we need that information to come from somewhere else.
