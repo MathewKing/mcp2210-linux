@@ -54,7 +54,7 @@ export ARCH=arm
 export CROSS_COMPILE=/usr/bin/armv6j-hardfloat-linux-gnueabi-
 export CPPFLAGS="-DMCP2210_QUIRKS=1"
 
-CFLAGS="-march=armv6j -mfpu=vfp -mfloat-abi=hard" make -j4 -C user &&
+CFLAGS="-O2 -g3 -pipe -march=armv6j -mfpu=vfp -mfloat-abi=hard" make -j4 -C user &&
 make -j4 "$@" &&
 make mcp2210.s &&
 scp -p mcp2210.ko user/libmcp2210.so user/mcp2210 root@pi:bin/
@@ -66,7 +66,7 @@ At the very least, your `KERNELDIR` should have a valid `.config` and you should
 * `CONFIG_SPI_SPIDEV` - if you want to use the kernel's handy-dandy spidev driver and the userspace utility's spi functionality
 * `CONFIG_GPIOLIB` - if you want to use the gpio interface
 
-You don't need to make `mcp2210.s` if you don't care to examine the disassembly. The `CFLAGS` supplied when building the userspace program aren't inferred if not supplied (although it really doesn't contain any floating point calculations at the moment).  I use `-j4` because I have a quad core processor, tune to your preferences.  Finally, there is a lot of hard-coded crap in the `Makefile` (The `Kconfig` only exists for future integration into the mainline kernel tree).
+You don't need to make `mcp2210.s` if you don't care to examine the disassembly. The `CFLAGS` supplied when building the userspace program aren't inferred if not supplied (although it really doesn't contain any floating point calculations at the moment).  I use `-j4` because I have a quad core processor, tune to your preferences.  Finally, there is a lot of hard-coded crap in the root [`Makefile`](Makefile) (The [`Kconfig`](Kconfig) only exists for future integration into the mainline kernel tree).
 
 Installing the Driver
 =====================
@@ -79,7 +79,7 @@ static const struct hid_device_id hid_table[] = {
 };
 ```
 
-This prevents the mcp2210 driver from being selected as a candidate, even if the vid/pid explicitly match.  Currently, the work-around is to run the script `user/mcp2210_bind.sh` as root (you must have sysfs mounted).  This uses sysfs files to tell the usbhid driver to unbind from the mcp2210 device so that the mcp2210 driver can probe it. If you know of a way to do this via udev rules, please notify me (just create an issue via the issue tracker).
+This prevents the mcp2210 driver from being selected as a candidate, even if the vid/pid explicitly match.  Currently, the work-around is to run the script [`user/mcp2210_bind.sh`](user/mcp2210_bind.sh) as root (you must have sysfs mounted).  This uses sysfs files to tell the usbhid driver to unbind from the mcp2210 device so that the mcp2210 driver can probe it. If you know of a way to do this via udev rules, please notify me (just create an issue via the issue tracker).
 
 Configuration & Setup
 =====================
@@ -116,38 +116,38 @@ For mask, you OR together the values for the configuration option(s) you want to
 <tr>
 	<th>Bit</th>
 	<th>Option</th>
-	<th>Section</th>
+	<th>Datasheet Section</th>
 	<th>struct</th>
 </tr><tr>
 	<td>1</td>
 	<td>chip settings (current)</td>
 	<td>3.2.4</td>
-	<td><tt><a href="mcp2210.h#L354">struct mcp2210_chip_settings</a></tt></td>
+	<td><tt><a href="mcp2210.h#L408">struct mcp2210_chip_settings</a></tt></td>
 </tr><tr>
 	<td>2</td>
 	<td>chip settings (power-up)</td>
 	<td>3.1.1</td>
-	<td><tt><a href="mcp2210.h#L354">struct mcp2210_chip_settings</a></tt></td>
+	<td><tt><a href="mcp2210.h#L408">struct mcp2210_chip_settings</a></tt></td>
 </tr><tr>
 	<td>4</td>
 	<td>spi transfer settings (current)</td>
 	<td>3.2.2</td>
-	<td><tt><a href="mcp2210.h#L387">struct mcp2210_spi_xfer_settings</a></tt></td>
+	<td><tt><a href="mcp2210.h#L441">struct mcp2210_spi_xfer_settings</a></tt></td>
 </tr><tr>
 	<td>8</td>
 	<td>spi transfer settings (power-up)</td>
 	<td>3.1.2</td>
-	<td><tt><a href="mcp2210.h#L387">struct mcp2210_spi_xfer_settings</a></tt></td>
+	<td><tt><a href="mcp2210.h#L441">struct mcp2210_spi_xfer_settings</a></tt></td>
 </tr><tr>
 	<td>16</td>
 	<td>key parameters (power-up)</td>
 	<td>3.1.3</td>
-	<td><tt><a href="mcp2210.h#L399">struct mcp2210_usb_key_params</a></tt></td>
+	<td><tt><a href="mcp2210.h#L453">struct mcp2210_usb_key_params</a></tt></td>
 </tr><tr>
 	<td>32</td>
 	<td>board config</td>
 	<td>n/a</td>
-	<td><tt><a href="mcp2210.h#L483">struct mcp2210_board_config</a></tt></td>
+	<td><tt><a href="mcp2210.h#L546">struct mcp2210_board_config</a></tt></td>
 </tr><tr>
 </table>
 
@@ -157,9 +157,9 @@ WARNING: Modifying `nvram_access_control` can permanently lock you chip!  Don't 
 
 Automatic Configuration
 -----------------------
-When the driver probes, it queries the device for (among other things) its power-up chip settings (section 3.1.1) and the power-up spi transfer settings (section 3.1.2). If Creek support is enabled (via `CONFIG_MCP2210_CREEK`), the first four bytes of the user EEPROM area are also read. If these match a "magic number", then the remainder of the user-EEPROM is read and decoded into a [`struct mcp2210_board_config`](mcp2210.h#L520) object which contains all of the information (timings for each SPI device, name of the spi protocol driver, label, etc.) to allow probing the spi_master.
+When the driver probes, it queries the device for (among other things) its power-up chip settings (section 3.1.1) and the power-up spi transfer settings (section 3.1.2). If Creek support is enabled (via `CONFIG_MCP2210_CREEK`), the first four bytes of the user EEPROM area are also read. If these match a "magic number", then the remainder of the user-EEPROM is read and decoded into a [`struct mcp2210_board_config`](mcp2210.h#L546) object which contains all of the information (timings for each SPI device, name of the spi protocol driver, label, etc.) to allow probing the spi_master.
 
-For details on the encoding format, see the comments in [`mcp2210-creek.h`](mcp2210-creek.h#L29) (see also [`creek_encode`](mcp2210-lib.c#L467) and [`creek_decode`](mcp2210-lib.c#L277))
+For details on the encoding format, see the comments in [`mcp2210-creek.h`](mcp2210-creek.h#L29) (see also [`creek_encode()`](mcp2210-lib.c#L618) and [`creek_decode()`](mcp2210-lib.c#L373))
 
 NOTICE: At this time, the Creek binary format is unstable and subject to change without a version bump.
 
