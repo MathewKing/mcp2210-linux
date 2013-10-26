@@ -253,7 +253,7 @@ static int set_dir_and_value(struct gpio_chip *chip, unsigned pin, int dir,
 
 	/* treat the dedicated interrupt counter as an ordinary gpio that
 	 * clears when read?  || (pin_mode == MCP2210_PIN_DEDICATED && pin == 6)*/
-	if (pin_mode == MCP2210_PIN_GPIO) {
+	if (pin_mode != MCP2210_PIN_GPIO) {
 		mcp2210_err("pin %u not gpio", pin);
 		return -EPERM;
 	}
