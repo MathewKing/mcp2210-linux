@@ -26,25 +26,6 @@
 
 #include <linux/spi/spidev.h>
 
-static const struct mcp2210_chip_settings my_chip_settings = {
-	.pin_mode = {
-		MCP2210_PIN_SPI,
-		MCP2210_PIN_GPIO,
-		MCP2210_PIN_DEDICATED,
-		MCP2210_PIN_DEDICATED,
-		MCP2210_PIN_DEDICATED,
-		MCP2210_PIN_DEDICATED,
-		MCP2210_PIN_DEDICATED,
-		MCP2210_PIN_SPI,
-		MCP2210_PIN_GPIO,
-	},
-	.gpio_value		= 0x0002,
-	.gpio_direction		= 0x0140,
-	.other_settings		= 0x01,
-	.nvram_access_control	= 0,
-	.password = {0, 0, 0, 0, 0, 0, 0, 0},
-};
-
 static const struct mcp2210_chip_settings my_power_up_chip_settings = {
 	.pin_mode = {
 		MCP2210_PIN_SPI,
@@ -64,17 +45,6 @@ static const struct mcp2210_chip_settings my_power_up_chip_settings = {
 	.password = {0, 0, 0, 0, 0, 0, 0, 0},
 };
 
-static const struct mcp2210_spi_xfer_settings my_spi_settings = {
-	.bitrate		= MCP2210_MAX_SPEED,
-	.idle_cs		= 0x01ff,
-	.active_cs		= 0x0000,
-	.cs_to_data_delay	= 1,
-	.last_byte_to_cs_delay	= 1,
-	.delay_between_bytes	= 1,
-	.bytes_per_trans	= 4,
-	.mode			= SPI_MODE_3
-};
-
 static const struct mcp2210_spi_xfer_settings my_power_up_spi_settings = {
 	.bitrate		= MCP2210_MAX_SPEED,
 	.idle_cs		= 0x01ff,
@@ -86,11 +56,14 @@ static const struct mcp2210_spi_xfer_settings my_power_up_spi_settings = {
 	.mode			= SPI_MODE_3
 };
 
+#define my_chip_settings my_power_up_chip_settings
+#define my_spi_settings  my_power_up_spi_settings
+
 static const struct mcp2210_usb_key_params my_usb_key_params = {
 	.vid		   = USB_VENDOR_ID_MICROCHIP,
 	.pid		   = USB_DEVICE_ID_MCP2210,
 	.chip_power_option = 0x80,
-	.requested_power   = 0xfa, /* 500mA */
+	.requested_power   = 0x32, /* 100mA */
 };
 
 static const struct mcp2210_board_config my_board_config = {
@@ -147,7 +120,7 @@ static const struct mcp2210_board_config my_board_config = {
 			.name = "ADNS-9800",
 		}, {
 			.mode = MCP2210_PIN_GPIO,
-			.name = "fried pin%d", /* yeah, I zapped it :( */
+			.name = "unused%d",
 		}
 	},
 	.poll_gpio_usecs	      = 0, //10000 * 1000,
