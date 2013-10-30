@@ -860,9 +860,9 @@ error_free:
 	return NULL;
 }
 
-#define spidev_set(fd, request, value, desc) 				\
+#define spidev_set(fd, request, ignore_zero_value, value, desc) 	\
 	do {								\
-		if (!(*(value)))					\
+		if (ignore_zero_value && !(*(value)))			\
 			break;						\
 		_spidev_set(fd, request, value, sizeof(*value), desc);	\
 	} while (0)
@@ -897,9 +897,9 @@ static int spidev_send(int argc, char *argv[]) {
 	if ((fd = open(config.spi.name, O_RDWR)) < 0)
 		fatal_error("open failed for %s", config.spi.name);
 
-	spidev_set(fd, SPI_IOC_RD_MODE, &config.spi.mode, "spi mode");
-	spidev_set(fd, SPI_IOC_RD_MAX_SPEED_HZ, &config.spi.speed_hz, "spi max speed");
-	spidev_set(fd, SPI_IOC_RD_BITS_PER_WORD, &config.spi.bits_per_word, "spi bits per word");
+	spidev_set(fd, SPI_IOC_RD_MODE, 0, &config.spi.mode, "spi mode");
+	spidev_set(fd, SPI_IOC_RD_MAX_SPEED_HZ, 1, &config.spi.speed_hz, "spi max speed");
+	spidev_set(fd, SPI_IOC_RD_BITS_PER_WORD, 1, &config.spi.bits_per_word, "spi bits per word");
 
 	if (ioctl(fd, SPI_IOC_MESSAGE(msg->num_xfers), msg->xfers) < 0)
 		fatal_error("spi message failed");
