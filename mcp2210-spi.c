@@ -372,7 +372,7 @@ static int queue_msg(struct mcp2210_device *dev, struct spi_message *msg,
 			return -EINVAL;
 		}
 
-		if (validate_speed(dev, xfer->speed_hz))
+		if (xfer->speed_hz && validate_speed(dev, xfer->speed_hz))
 			return -EINVAL;
 	}
 
