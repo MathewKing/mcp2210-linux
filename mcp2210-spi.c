@@ -42,6 +42,10 @@
 # define HAVE_SPI_CS_GPIO 1
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0)
+# define HAVE_SPI_MASTER_SPEED 1
+#endif
+
 static int spi_submit_prepare(struct mcp2210_cmd *cmd_head);
 static int spi_complete_urb(struct mcp2210_cmd *cmd_head);
 static int spi_mcp_error(struct mcp2210_cmd *cmd_head);
@@ -106,7 +110,10 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	/* we only need a pointer to the struct mcp2210_device */
 	*((struct mcp2210_device **)spi_master_get_devdata(master)) = dev;
 
-	//master->max_speed_hz = MCP2210_MAX_SPEED;
+#ifdef HAVE_SPI_MASTER_SPEED
+	master->max_speed_hz = MCP2210_MAX_SPEED;
+	master->min_speed_hz = MCP2210_MIN_SPEED;
+#endif
 	master->bus_num = -1;
 	master->num_chipselect = MCP2210_NUM_PINS;
 	/* unused: master->dma_alignment */
