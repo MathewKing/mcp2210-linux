@@ -550,7 +550,7 @@ static int creek_configure(struct mcp2210_cmd *cmd, void *context) {
 
 	BUG_ON(dev->config);
 	if (IS_ERR(board_config)) {
-		mcp2210_err("life sucks eh? %de", (int)PTR_ERR(board_config));
+		mcp2210_err("Failed to decode board config from MCP2210's user-EEPROM: %de", (int)PTR_ERR(board_config));
 		return 0;
 	}
 
@@ -830,10 +830,7 @@ static void fail_device(struct mcp2210_device *dev, int error)
 
 
 /**
- *
  * eats new_config
- *
- * must hold dev->dev_spinlock
  */
 int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *new_config)
 {

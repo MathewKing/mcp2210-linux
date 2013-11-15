@@ -84,6 +84,13 @@ static int transfer_one_message(struct spi_master *master, struct spi_message *m
 static int unprepare_transfer_hardware(struct spi_master *master);
 #endif /* USE_SPI_QUEUE */
 
+static void mcp2210_spi_probe_async(struct work_struct *work);
+
+struct async_spi_probe {
+	struct work_struct work;
+	struct mcp2210_device *dev;
+};
+
 /**
  * mcp2210_spi_probe -
  * @dev:
@@ -92,7 +99,7 @@ static int unprepare_transfer_hardware(struct spi_master *master);
 int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	struct spi_master *master; /* just a local for code brievity */
 	int ret;
-	unsigned i;
+	struct async_spi_probe *async_probe;
 
 	mcp2210_info();
 
@@ -102,6 +109,13 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 
 	if (!dev || !dev->config || dev->spi_master)
 		return -EINVAL;
+
+	async_probe = kzalloc(sizeof(*async_probe), GFP_KERNEL);
+	if (!async_probe)
+		return -ENOMEM;
+
+	INIT_WORK(&async_probe->work, mcp2210_spi_probe_async);
+	async_probe->dev = dev;
 
 	master = spi_alloc_master(&dev->udev->dev, sizeof(void*));
 	if (!master)
@@ -135,27 +149,45 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	master->unprepare_transfer_hardware = unprepare_transfer_hardware;
 #endif
 
+	memset(dev->chips, 0, sizeof(dev->chips));
+
 	ret = spi_register_master(master);
 
 	if (ret) {
 		spi_master_put(master);
-		goto error0;
+		dev->spi_master = NULL;
+
+		return ret;
 	}
+
+	dev->spi_master = master;
+	dev->s.is_spi_probed = 1;
+	schedule_work(&async_probe->work);
+
+	return 0;
+}
+
+static void mcp2210_spi_probe_async(struct work_struct *work) {
+	struct async_spi_probe *async_probe = (void*)work;
+	struct mcp2210_device *dev = async_probe->dev;
+	struct spi_master *master = dev->spi_master;
+	int ret;
+	unsigned i;
+
+	mcp2210_info();
 
 	for (i = 0; i < MCP2210_NUM_PINS; ++i) {
 		struct mcp2210_pin_config *cfg = &dev->config->pins[i];
 		struct spi_device *chip;
 		const char *modalias;
 
-		if (cfg->mode != MCP2210_PIN_SPI) {
-			dev->chips[i] = NULL;
+		if (cfg->mode != MCP2210_PIN_SPI)
 			continue;
-		}
 
 		chip = spi_alloc_device(master);
 		if (!chip) {
 			ret = -ENOMEM;
-			goto error1;
+			goto error;
 		}
 
 		chip->max_speed_hz  = cfg->spi.max_speed_hz;
@@ -180,7 +212,7 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 			chip->irq = -1;
 
 		if (cfg->spi.use_cs_gpio)
-			mcp2210_warn("not yet implemented: cs_gpio");
+			mcp2210_warn("not yet implemented: cs_gpio (err, maybe so actually)");
 
 		if (cfg->has_irq)
 			mcp2210_warn("not yet implemented: IRQs");
@@ -193,28 +225,28 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 		WARN_ON(strlen(modalias) >= sizeof(chip->modalias));
 		strncpy(chip->modalias, modalias, sizeof(chip->modalias));
 
+		dev->chips[i] = chip;
 		ret = spi_add_device(chip);
 		if (ret < 0) {
+			/* FIXME: almost certainly a race condition */
+			dev->chips[i] = NULL;
 			spi_dev_put(chip);
-			goto error1;
+			goto error;
 		}
-
-		dev->chips[i] = chip;
 	}
 
-	dev->spi_master = master;
-	dev->s.is_spi_probed = 1;
+	mcp2210_notice("spi device probe completed");
+	kfree(async_probe);
+	return;// 0;
 
-	return 0;
-
-error1:
-	spi_unregister_master(master);
-	memset(dev->chips, 0, sizeof(dev->chips));
-
-error0:
+error:
+	mcp2210_err("SPI device failed to probe: %de\n", ret);
 	dev->spi_master = NULL;
+	memset(dev->chips, 0, sizeof(dev->chips));
+	spi_unregister_master(master);
+	kfree(async_probe);
 
-	return ret;
+	return;// ret;
 }
 
 void mcp2210_spi_remove(struct mcp2210_device *dev)
