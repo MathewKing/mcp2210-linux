@@ -240,6 +240,12 @@ static void mcp2210_spi_cleanup(struct spi_device *spi)
 	/* Do we have any cleanup to do? */
 }
 
+#ifdef HAVE_SPI_MASTER_SPEED
+static inline int validate_speed(struct mcp2210_device *dev, u32 bitrate)
+{
+	return 0;
+}
+#else
 static int validate_speed(struct mcp2210_device *dev, u32 bitrate)
 {
 	if (bitrate < MCP2210_MIN_SPEED || bitrate > MCP2210_MAX_SPEED) {
@@ -251,6 +257,7 @@ static int validate_speed(struct mcp2210_device *dev, u32 bitrate)
 
 	return 0;
 }
+#endif
 
 /* must hold dev_spinlock */
 /**
