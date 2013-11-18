@@ -811,7 +811,7 @@ static int spi_mcp_error(struct mcp2210_cmd *cmd_head)
 		mcp2210_warn("cmd->busy_count %u\n", cmd->busy_count);
 
 		++cmd->busy_count;
-		if (cmd->busy_count < 64) {
+		if (cmd->busy_count < 64 * (IS_ENABLED(CONFIG_MCP2210_DONT_SUCK_THE_CPU_DRY) ? 1 : 16)) {
 			/* hmm, hopefully shoudn't happen */
 			/* FIXME: tweak this somehow */
 			cmd->head.delay_until = jiffies + usecs_to_jiffies(750);
