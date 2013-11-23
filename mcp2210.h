@@ -676,7 +676,7 @@ struct mcp2210_cmd_ctl {
  * @xfer:		The current spi_transfer
  * @pos:		The number of bytes sucessfully xfered to/from the
  * 			peripheral.
- * @pending_bytes:	The number of bytes sent to the MCP2210 and (acked and
+ * @pending_bytes:	The number of bytes sent to the MCP2210 (acked and
  * 			unacked), but not yet transferred to the SPI device.
  * @pending_unacked:	The number of un-acked bytes sent to the MCP2210.
  * @busy_count:		The number of times the device has given us 0xf8

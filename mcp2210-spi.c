@@ -603,7 +603,14 @@ static int spi_submit_prepare(struct mcp2210_cmd *cmd_head)
 	if (cmd->pos + cmd->pending_bytes < cmd->xfer->len) {
 		len = cmd->xfer->len - cmd->pos - cmd->pending_bytes;
 
-		if(len > MCP2210_BUFFER_SIZE - 4)
+		/* don't try to send more than the buffer will hold */
+		if (len > MCP2210_BUFFER_SIZE - cmd->pending_bytes) {
+			len = MCP2210_BUFFER_SIZE - cmd->pending_bytes;
+			if (!len)
+				goto buffer_full;
+		}
+
+		if (len > MCP2210_BUFFER_SIZE - 4)
 			len = MCP2210_BUFFER_SIZE - 4;
 
 		/* for NULL tx buffer means we just send zeros.  Unfortunately,
@@ -616,6 +623,7 @@ static int spi_submit_prepare(struct mcp2210_cmd *cmd_head)
 		cmd->pending_unacked = len;
 		cmd->pending_bytes  += len;
 	} else {
+buffer_full:
 		len = 0;
 		start = NULL;
 	}
