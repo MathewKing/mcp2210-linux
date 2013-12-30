@@ -689,12 +689,6 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		return -ENOMEM;
 	}
 
-	/* no sleeping until we're done with all of our probing */
-	if ((ret = usb_autopm_get_interface(intf))) {
-		mcp2210_err("usb_autopm_get_interface failed: %de", ret);
-		return ret;
-	}
-
 	dev->intf = intf;
 	dev->udev = udev;
 	kref_init(&dev->kref);
@@ -731,16 +725,22 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 			continue;
 
 		if ((ret = init_endpoint(dev, ep)))
-			goto error0;
+			goto error_kref_put;
 	}
 
 	if (unlikely(!dev->eps[EP_OUT].ep || !dev->eps[EP_IN].ep)) {
 		mcp2210_err("could not find in and/or out interrupt endpoints");
-		goto error0;
+		goto error_kref_put;
 	}
 
 	usb_set_intfdata(intf, dev);
 
+	/* no sleeping until we're done with all of our probing */
+	if ((ret = usb_autopm_get_interface(intf))) {
+		mcp2210_err("usb_autopm_get_interface failed: %de", ret);
+		goto error_clear_intf_dev;
+		return ret;
+	}
 
 
 #ifdef CONFIG_MCP2210_IOCTL
@@ -750,7 +750,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	ret = usb_register_dev(intf, &mcp2210_class);
 	if (unlikely(ret)) {
 		mcp2210_err("failed to register device %de\n", ret);
-		goto error1;
+		goto error_autopm_put;
 	}
 #endif /* CONFIG_MCP2210_IOCTL */
 
@@ -773,7 +773,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_KEY_PARAMS, NULL, 0, false, GFP_KERNEL))) {
 
 		mcp2210_err("Adding some command failed with %de", ret);
-		goto error2;
+		goto error_deregister_dev;
 	}
 
 #ifdef CONFIG_MCP2210_CREEK
@@ -782,7 +782,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		ret = mcp2210_eeprom_read(dev, NULL, 0, 4, eeprom_read_complete, dev, GFP_KERNEL);
 		if (ret && ret != -EINPROGRESS) {
 			mcp2210_err("Adding eeprom command failed with %de", ret);
-			goto error2;
+			goto error_deregister_dev;
 		}
 	}
 #endif
@@ -794,22 +794,25 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	ret = process_commands(dev, false, true);
 
 	if (ret < 0)
-		goto error2;
+		goto error_deregister_dev;
 
 
 	mcp2210_info("success");
 
 	return 0;
 
-error2:
+error_deregister_dev:
 #ifdef CONFIG_MCP2210_IOCTL
 	usb_deregister_dev(intf, &mcp2210_class);
 
-error1:
+error_autopm_put:
 #endif
+	usb_autopm_put_interface(intf);
+
+error_clear_intf_dev:
 	usb_set_intfdata(intf, NULL);
 
-error0:
+error_kref_put:
 	kref_put(&dev->kref, mcp2210_delete);
 
 	return ret;
@@ -904,7 +907,9 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 	if (!dev->cur_cmd)
 		process_commands(dev, false, true);
 
+	/* Allow the device to auto-sleep now */
 	usb_autopm_put_interface(dev->intf);
+
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		mcp2210_info("----------new dump----------\n");
 		dump_dev(KERN_INFO, 0, "", dev);
