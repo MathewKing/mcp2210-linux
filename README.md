@@ -1,7 +1,7 @@
 MCP2210 driver for Linux
 ========================
 
-This is a Linux device driver for the mcp2210 USB-to-SPI bridge.  It includes a userland utility for testing, configuration and control and currently builds as an out-of-tree module.
+This is a Linux device driver for the [Microchip mcp2210 USB-to-SPI bridge](http://www.microchip.com/wwwproducts/Devices.aspx?dDocName=en556614).  It currently builds as an out-of-tree module and includes a userland utility for testing, configuration, control and spi messaging via spidev. (There are other userland utilities for doing spi through [spidev](https://www.kernel.org/doc/Documentation/spi/spidev)).
 
 This is a USB interface driver, NOT a usbhid driver!  The MCP2210 isn't a device that interfaces with humans, and they only choose the HID interface to avoid the hassle of writing and maintaining drivers for every other platform. However, it means that you use this whole layer of software, protocols, drivers, etc that you don't really need.  Therefore, this driver skips that layer and communicates directly with the device via standard interrupt URBs (not hid reports).
 
@@ -31,20 +31,20 @@ To explicitly say where your sources are, use:
 KERNELDIR=/usr/scr/abcdefg make
 ```
 
-This is still an out-of-tree module, so if you don't fancy the default configuration, run `make modules` at least once to have an out-of-tree-autoconf.h created from the template (or just copy the damn file yourself). Now you can edit it until you like it.  For reference, refer to Kconfig.
+This is an out-of-tree module, so if you don't fancy the default configuration, run `make out-of-tree-autoconf.h` to have it generated from the [template](out-of-tree-autoconf.h.template) and edit to your needs.  You can refer to [`Kconfig`](Kconfig) for descriptions of the various config options, but there is currently no mechanism to use the `Kconfig` for a `make menuconfig`; the `Kconfig` exists primarily for mainline integration.
 
 Note that at this time, there is no `install` target for the userland utilities and to run `mcp2210-util`, you must explicitly specify an `LD_LIBRARY_PATH`. Example:
 
 ```bash
 /home/daniel/proj/mcp2210$ make -j4
 .... make output.....
-/home/daniel/proj/mcp2210$ LD_LIBRARY_PATH=user user/mcp2210-util --help
+/home/daniel/proj/mcp2210$ LD_LIBRARY_PATH=`pwd`/user user/mcp2210-util --help
 ```
 
 Cross-Compiling
 ---------------
 
-I'm not going to tell you how to setup a cross-compiling toolchain, but here is how I build for my Raspberry Pi.  Please note that the USB drivers for the Pi are currently problematic, especially prior the commit "[USB fix using a FIQ to implement split transactions](https://github.com/raspberrypi/linux/commit/db4fad7380c83b6e1b62dfb3fd61e55d031a04fc)", which has greatly improved things. So note the `MCP2210_QUIRKS=1` cpp variable.
+I'm not going to tell you how to setup a cross-compiling toolchain, but here is how I build for my Raspberry Pi.  Please note that the USB drivers for the Pi are currently problematic, especially prior the commit "[USB fix using a FIQ to implement split transactions](https://github.com/raspberrypi/linux/commit/db4fad7380c83b6e1b62dfb3fd61e55d031a04fc)", which has greatly improved things. So the below `MCP2210_QUIRKS=1` cpp variable should be omitted if you aren't using a pi.
 
 ```bash
 #!/bin/bash
@@ -60,13 +60,13 @@ make mcp2210.s &&
 scp -p mcp2210.ko user/libmcp2210.so user/mcp2210 root@pi:bin/
 ```
 
-At the very least, your `KERNELDIR` should have a valid `.config` and you should run `make modules_prepare`.  You'll need to enable the following in your .config:
+At the very least, your `KERNELDIR` should have a valid `.config` and you should run `make modules_prepare`.  You'll need to enable the following in your .config (either modules or built-ins will do):
 
 * `CONFIG_SPI` - if you want to use the MCP2210 as an spi master
-* `CONFIG_SPI_SPIDEV` - if you want to use the kernel's handy-dandy spidev driver and the userspace utility's spi functionality
-* `CONFIG_GPIOLIB` - if you want to use the gpio interface
+* `CONFIG_SPI_SPIDEV` - if you want to use the kernel's handy-dandy spidev driver and the userspace utility's spi functionality.  If you will only be using spi protocol drivers specific to your peripherals, then you do not need this option.
+* `CONFIG_GPIOLIB` - if you want to use the gpio interface or use gpios for chip selects (as opposed to Microchip's mechanism, which is faster if it serves your needs)
 
-You don't need to make `mcp2210.s` if you don't care to examine the disassembly. The `CFLAGS` supplied when building the userspace program aren't inferred if not supplied (although it really doesn't contain any floating point calculations at the moment).  I use `-j4` because I have a quad core processor, tune to your preferences.  Finally, there is a lot of hard-coded crap in the root [`Makefile`](Makefile) (The [`Kconfig`](Kconfig) only exists for future integration into the mainline kernel tree).
+You don't need to make `mcp2210.s` if you don't care to examine the disassembly. The `CFLAGS` supplied when building the userspace program aren't inferred if not supplied (although it really doesn't contain any floating point calculations at the moment).  I use `-j4` because I have a quad core processor, tune to your preferences.
 
 Installing the Driver
 =====================
@@ -79,7 +79,7 @@ static const struct hid_device_id hid_table[] = {
 };
 ```
 
-This prevents the mcp2210 driver from being selected as a candidate, even if the vid/pid explicitly match.  Currently, the work-around is to run the script [`user/mcp2210_bind.sh`](user/mcp2210_bind.sh) as root (you must have sysfs mounted).  This uses sysfs files to tell the usbhid driver to unbind from the mcp2210 device so that the mcp2210 driver can probe it. If you know of a way to do this via udev rules, please notify me (just create an issue via the issue tracker).
+This prevents the mcp2210 driver from being selected as a candidate, even if the vid/pid explicitly match.  Currently, the work-around is to run the script [`user/mcp2210_bind.sh`](user/mcp2210_bind.sh) as root (you must have sysfs mounted).  This uses sysfs files to tell the usbhid driver to unbind from the mcp2210 device so that the mcp2210 driver can probe it.  If you know of a way to do this via udev rules, please notify me! (just create an issue via the issue tracker).
 
 Configuration & Setup
 =====================
@@ -165,7 +165,7 @@ NOTICE: At this time, the Creek binary format is unstable and subject to change 
 
 Storing and Viewing Auto-Configure Data
 ---------------------------------------
-All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L387) in `user/settings.h` is in the userspace utility program.
+All support for creating this encoding from your [`struct mcp2210_board_config`](mcp2210.h#L546) in `user/settings.h` is in the userspace utility program.
 
 1. Edit `user/settings.h` to your needs and recomple `mcp2210-util`
 2. Run the following command to encode to config.dat:
@@ -174,14 +174,14 @@ All support for creating this encoding from your [`struct mcp2210_board_config`]
 mcp2210-util encode > config.dat
 ```
 
-3. `ls -l config.dat` to determine its size
+3. `ls -l config.dat` to determine its size (yes, the utility should eventually do this for you)
 4. Run the following command to store it to the user-EEPROM (replace size with the size of the file)
 
 ```
 mcp2210-util eeprom write size=<size> addr=0 < config.dat
 ```
 
-Decoding is the inverse.  However, the creek data doesn't include any data available in the "chip settings" (because this would be a redundant waste of space) so your chip settings in settings.h (or at least the pin modes) must match what was used when the encoding was generated.
+Decoding is the inverse.  However, the creek data doesn't include any data available in the "chip settings" (because this would be a redundant waste of limited space) so your chip settings in settings.h (or at least the pin modes) must match what was used when the encoding was generated.
 
 1. Make sure my_chip_settings in `user/settings.h` is correct.
 2. Run the following command:
