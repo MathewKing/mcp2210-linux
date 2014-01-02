@@ -736,12 +736,7 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	usb_set_intfdata(intf, dev);
 
 	/* no sleeping until we're done with all of our probing */
-	if ((ret = usb_autopm_get_interface(intf))) {
-		mcp2210_err("usb_autopm_get_interface failed: %de", ret);
-		goto error_clear_intf_dev;
-		return ret;
-	}
-
+	usb_autopm_get_interface_no_resume(intf);
 
 #ifdef CONFIG_MCP2210_IOCTL
 	/* TODO: Do I need a "major number" from maintainer?
@@ -802,14 +797,11 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	return 0;
 
 error_deregister_dev:
-#ifdef CONFIG_MCP2210_IOCTL
-	usb_deregister_dev(intf, &mcp2210_class);
+	if (IS_ENABLED(CONFIG_MCP2210_IOCTL))
+		usb_deregister_dev(intf, &mcp2210_class);
 
 error_autopm_put:
-#endif
 	usb_autopm_put_interface(intf);
-
-error_clear_intf_dev:
 	usb_set_intfdata(intf, NULL);
 
 error_kref_put:
@@ -987,6 +979,9 @@ void mcp2210_disconnect(struct usb_interface *intf)
 #ifdef CONFIG_MCP2210_IOCTL
 	usb_deregister_dev(intf, &mcp2210_class);
 #endif
+	/* if never configured, make sure we release this */
+	if (!dev->config)
+		usb_autopm_put_interface(dev->intf);
 	usb_set_intfdata(intf, NULL);
 	kref_put(&dev->kref, mcp2210_delete);
 
