@@ -207,6 +207,148 @@ int validate_board_config(const struct mcp2210_board_config *src,
 
 #ifdef CONFIG_MCP2210_CREEK
 
+static const uint pow10[] = {
+	1,
+	10,
+	100,
+	1000,
+	10000,
+	100000,
+	1000000,
+	10000000,
+	100000000,
+	1000000000,
+};
+
+static uint _pack_uint(uint value, uint value_bits, uint scale_bits)
+{
+	const uint num_end = (1 << value_bits);
+	const uint scale_end = (1 << scale_bits);
+	uint num;
+	uint scale;
+	uint mult;
+	uint ret;
+
+	for (scale = 0, mult = 1; scale < scale_end; ++scale, mult *= 10) {
+		num = value / mult;
+		if (num < num_end) {
+			ret = num | scale << value_bits;
+
+			/* some sanity checks until we know that this is correct */
+			BUG_ON(num   & ~((1 << value_bits) - 1));
+			BUG_ON(scale & ~((1 << scale_bits) - 1));
+			BUG_ON(ret   & ~((1 << (value_bits + scale_bits)) - 1));
+
+			return ret;
+		}
+	}
+
+	BUG();
+
+	return (uint)-1;
+}
+
+static uint _unpack_uint(uint packed, uint value_bits, uint scale_bits)
+{
+	const uint value_mask = (1 << value_bits) - 1;
+	const uint scale_mask = (1 << scale_bits) - 1;
+	const uint value = packed & value_mask;
+	const uint scale = (packed >> value_bits) & scale_mask;
+
+#if 0
+	uint i, mult;
+
+	for (i = 0, mult = 1; i != scale; ++i, mult *= 10);
+	return value * mult;
+#else
+	if (scale <= 9)
+		return value * pow10[scale];
+	else
+		return (uint)-1;
+
+#endif
+}
+
+/**
+ * unpack_uint_opt - Read and unpack an optional packed uint value from a
+ * 		     bit stream
+ */
+static uint _unpack_uint_opt(struct bit_creek *src, uint value_bits,
+			     uint scale_bits, uint def)
+{
+	if (creek_get_bits(src, 1)) {
+		uint data = creek_get_bits(src, value_bits + scale_bits);
+		return _unpack_uint(data, value_bits, scale_bits);
+	} else
+		return def;
+}
+
+static __always_inline void validate_packed(uint value_bits, uint scale_bits)
+{
+	BUILD_BUG_ON(scale_bits + value_bits >= sizeof(uint) * 8);
+}
+
+/**
+ * pack_uint - Pack a positive integral value into a smaller space by
+ *	       tossing out precision.
+ *
+ * @value:	The (normal) value
+ * @value_bits:	Size (in bits) of the value portion of the result (currently
+ * 		requires a compile-time constant)
+ * @scale_bits:	Size (in bits) of the scale portion of the result (currently
+ * 		requires a compile-time constant)
+ *
+ * This mechanism for packing numbers allows for a wide range of values with a
+ * limited precision.  A "10:2" packed value has 10 bits of value and 2 bits of
+ * scale allowing for the values 987, 9870, 98700 or 987000, but not 9879,
+ * 98799, etc.  In other words, the least significant portion of the value is
+ * zeroed in the conversion process.
+ *
+ * @returns Upon error, (uint)-1.  Otherwise, the result which is
+ * 	    guaranteed to fit into value_bits + scale_bits bits.
+ */
+static __always_inline uint pack_uint(uint value, uint value_bits,
+				      uint scale_bits)
+{
+	validate_packed(value_bits, scale_bits);
+
+	return _pack_uint(value, value_bits, scale_bits);
+}
+
+/**
+ * unpack_uint - Unpack a packed positive integral number.
+ *
+ * @packed:	The packed value
+ * @value_bits:	Size (in bits) of the value portion of packed (currently
+ * 		requires a compile-time constant)
+ * @scale_bits:	Size (in bits) of the scale portion of packed (currently
+ * 		requires a compile-time constant)
+ *
+ * @see pack_uint
+ *
+ * @returns The unpacked value.
+ */
+static __always_inline uint unpack_uint(uint packed, uint value_bits,
+					uint scale_bits)
+{
+	validate_packed(value_bits, scale_bits);
+
+	return _unpack_uint(packed, value_bits, scale_bits);
+}
+
+/**
+ * unpack_uint_opt - Read and unpack an optional packed uint value from a
+ * 		     bit stream
+ */
+static __always_inline uint unpack_uint_opt(struct bit_creek *src,
+					    uint value_bits, uint scale_bits,
+					    uint def)
+{
+	validate_packed(value_bits, scale_bits);
+
+	return _unpack_uint_opt(src, value_bits, scale_bits, def);
+}
+
 /**
  * creek_get_bits -- helper function to treat our buffer like a stream of bits
  */
@@ -290,20 +432,6 @@ int creek_put_bits(struct bit_creek *bs, uint value, uint num_bits) {
 	}
 
 	return 0;
-}
-
-/**
- * unpack_uint_opt - Read and unpack an optional packed uint value from a
- * 		     bit stream
- */
-static inline uint unpack_uint_opt(struct bit_creek *src, uint value_bits,
-				   uint scale_bits, uint def)
-{
-	if (creek_get_bits(src, 1)) {
-		uint data = creek_get_bits(src, value_bits + scale_bits);
-		return unpack_uint(data, value_bits, scale_bits);
-	} else
-		return def;
 }
 
 /**
