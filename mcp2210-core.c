@@ -355,8 +355,11 @@ static int mcp2210_open(struct inode *inode, struct file *file)
 	if (!(dev = usb_get_intfdata(intf)))
 		return -ENODEV;
 
-	if ((ret = usb_autopm_get_interface(intf)))
+	ret = usb_autopm_get_interface(intf);
+	if (ret && ret != -EACCES) {
+		mcp2210_err("usb_autopm_get_interface() failed:%de", ret);
 		return ret;
+	}
 
 	kref_get(&dev->kref);
 	file->private_data = dev;
