@@ -269,10 +269,6 @@ static uint _unpack_uint(uint packed, uint value_bits, uint scale_bits)
 #endif
 }
 
-/**
- * unpack_uint_opt - Read and unpack an optional packed uint value from a
- * 		     bit stream
- */
 static uint _unpack_uint_opt(struct bit_creek *src, uint value_bits,
 			     uint scale_bits, uint def)
 {
@@ -282,6 +278,26 @@ static uint _unpack_uint_opt(struct bit_creek *src, uint value_bits,
 	} else
 		return def;
 }
+
+/**
+ * pack_uint_opt - Write an optional packed uint value to a bit stream
+ *
+ * If the value matches def, then only a single zero bit is written. Otherwise,
+ * a one bit is written followed by the valued converted to a packed uint as
+ * specified by value_ and scale_ bits.
+ */
+static void _pack_uint_opt(struct bit_creek *dest, uint value, uint value_bits,
+			   uint scale_bits, uint def)
+{
+	bool is_not_default = (value != def);
+
+	creek_put_bits(dest, is_not_default, 1);
+	if (is_not_default) {
+		uint data = _pack_uint(value, value_bits, scale_bits);
+		creek_put_bits(dest, data, value_bits + scale_bits);
+	}
+}
+
 
 static __always_inline void validate_packed(uint value_bits, uint scale_bits)
 {
@@ -347,6 +363,23 @@ static __always_inline uint unpack_uint_opt(struct bit_creek *src,
 	validate_packed(value_bits, scale_bits);
 
 	return _unpack_uint_opt(src, value_bits, scale_bits, def);
+}
+
+
+/**
+ * pack_uint_opt - Write an optional packed uint value to a bit stream
+ *
+ * If the value matches def, then only a single zero bit is written. Otherwise,
+ * a one bit is written followed by the valued converted to a packed uint as
+ * specified by value_ and scale_ bits.
+ */
+static __always_inline void pack_uint_opt(struct bit_creek *dest, uint value,
+					  uint value_bits, uint scale_bits,
+					  uint def)
+{
+	validate_packed(value_bits, scale_bits);
+
+	_pack_uint_opt(dest, value, value_bits, scale_bits, def);
 }
 
 /**
@@ -707,25 +740,6 @@ exit_free:
 		return ERR_PTR(ret);
 	}
 	return board_config;
-}
-
-/**
- * pack_uint_opt - Write an optional packed uint value to a bit stream
- *
- * If the value matches def, then only a single zero bit is written. Otherwise,
- * a one bit is written followed by the valued converted to a packed uint as
- * specified by value_ and scale_ bits.
- */
-static inline void pack_uint_opt(struct bit_creek *dest, uint value,
-				 uint value_bits, uint scale_bits, uint def)
-{
-	bool is_not_default = (value != def);
-
-	creek_put_bits(dest, is_not_default, 1);
-	if (is_not_default) {
-		uint data = pack_uint(value, value_bits, scale_bits);
-		creek_put_bits(dest, data, value_bits + scale_bits);
-	}
 }
 
 /* we could restrict strings to one case and such and get them smaller, but
