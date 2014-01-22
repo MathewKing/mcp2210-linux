@@ -130,3 +130,13 @@ config MCP2210_USB_QUIRKS
 
 	  If unsure, say n.
 
+config MCP2210_AUTOPM
+	bool "Enable autosuspend via pm runtime (in development)"
+	depends on MCP2210
+	select PM
+	help
+	  Saying yes here enables autosuspend support via the pm runtime
+	  core. This feature is currently in development and known to be
+	  non-working. (Enables PM Runtime)
+
+	  If unsure, say n.

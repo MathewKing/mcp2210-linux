@@ -288,12 +288,14 @@ static const struct usb_device_id mcp2210_devices[] = {
 };
 
 static struct usb_driver mcp2210_driver = {
-    .name = "mcp2210",
-    .id_table = mcp2210_devices,
-    .probe = mcp2210_probe,
-    .disconnect = mcp2210_disconnect,
-    .suspend = NULL,
-    .resume = NULL
+	.name			= "mcp2210",
+	.probe			= mcp2210_probe,
+	.disconnect		= mcp2210_disconnect,
+	.suspend		= NULL,
+	.resume			= NULL,
+	.reset_resume		= NULL,
+	.id_table		= mcp2210_devices,
+	.supports_autosuspend	= IS_ENABLED(CONFIG_MCP2210_AUTOPM),
 };
 
 /******************************************************************************
@@ -355,10 +357,12 @@ static int mcp2210_open(struct inode *inode, struct file *file)
 	if (!(dev = usb_get_intfdata(intf)))
 		return -ENODEV;
 
-	ret = usb_autopm_get_interface(intf);
-	if (ret && ret != -EACCES) {
-		mcp2210_err("usb_autopm_get_interface() failed:%de", ret);
-		return ret;
+	if (IS_ENABLED(CONFIG_MCP2210_AUTOPM)) {
+		ret = usb_autopm_get_interface(intf);
+		if (ret && ret != -EACCES) {
+			mcp2210_err("usb_autopm_get_interface() failed:%de", ret);
+			return ret;
+		}
 	}
 
 	kref_get(&dev->kref);
@@ -376,7 +380,7 @@ static int mcp2210_release(struct inode *inode, struct file *file)
 
 	/* allow the device to be autosuspended */
 	mutex_lock(&dev->io_mutex);
-	if (dev->intf)
+	if (IS_ENABLED(CONFIG_MCP2210_AUTOPM) && dev->intf)
 		usb_autopm_put_interface(dev->intf);
 	mutex_unlock(&dev->io_mutex);
 
@@ -739,7 +743,9 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	usb_set_intfdata(intf, dev);
 
 	/* no sleeping until we're done with all of our probing */
-	usb_autopm_get_interface_no_resume(intf);
+	if (IS_ENABLED(CONFIG_MCP2210_AUTOPM))
+		usb_autopm_get_interface_no_resume(intf);
+
 
 #ifdef CONFIG_MCP2210_IOCTL
 	/* TODO: Do I need a "major number" from maintainer?
@@ -804,7 +810,8 @@ error_deregister_dev:
 		usb_deregister_dev(intf, &mcp2210_class);
 
 error_autopm_put:
-	usb_autopm_put_interface(intf);
+	if (IS_ENABLED(CONFIG_MCP2210_AUTOPM))
+		usb_autopm_put_interface(intf);
 	usb_set_intfdata(intf, NULL);
 
 error_kref_put:
@@ -903,7 +910,8 @@ int mcp2210_configure(struct mcp2210_device *dev, struct mcp2210_board_config *n
 		process_commands(dev, false, true);
 
 	/* Allow the device to auto-sleep now */
-	usb_autopm_put_interface(dev->intf);
+	if (IS_ENABLED(CONFIG_MCP2210_AUTOPM))
+		usb_autopm_put_interface(dev->intf);
 
 	if (IS_ENABLED(CONFIG_MCP2210_DEBUG)) {
 		mcp2210_info("----------new dump----------\n");
@@ -983,7 +991,7 @@ void mcp2210_disconnect(struct usb_interface *intf)
 	usb_deregister_dev(intf, &mcp2210_class);
 #endif
 	/* if never configured, make sure we release this */
-	if (!dev->config)
+	if (IS_ENABLED(CONFIG_MCP2210_AUTOPM) && !dev->config)
 		usb_autopm_put_interface(dev->intf);
 	usb_set_intfdata(intf, NULL);
 	kref_put(&dev->kref, mcp2210_delete);
