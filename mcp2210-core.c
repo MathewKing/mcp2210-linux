@@ -670,7 +670,13 @@ static int eeprom_read_complete(struct mcp2210_cmd *cmd_head, void *context)
 #endif
 	return 0;
 }
-#endif
+#else
+static inline int eeprom_read_complete(struct mcp2210_cmd *cmd_head,
+				       void *context)
+{
+	return 0;
+}
+#endif /* CONFIG_MCP2210_CREEK */
 
 /* mcp2210_probe
  * can sleep, but keep it minimal as the USB core uses a single thread to probe
@@ -746,7 +752,6 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	if (IS_ENABLED(CONFIG_MCP2210_AUTOPM))
 		usb_autopm_get_interface_no_resume(intf);
 
-
 #ifdef CONFIG_MCP2210_IOCTL
 	/* TODO: Do I need a "major number" from maintainer?
 	 * https://www.kernel.org/doc/htmldocs/usb/API-usb-register-dev.html
@@ -764,24 +769,31 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	/* Submit initial commands & queries.  First, we have to cancel any SPI
 	 * messages that were started (and not finished) prior the host machine
 	 * rebooting since the chip fails to do this upon USB reset. */
-	if ((ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_SPI_CANCEL, 0, NULL, 0, false, GFP_KERNEL))
+	if ((ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_SPI_CANCEL, 0,
+				       NULL, 0, false, GFP_KERNEL))
 	/* current chip configuration */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_CHIP_CONFIG, 0, NULL, 0, false, GFP_KERNEL))
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_CHIP_CONFIG, 0,
+				       NULL, 0, false, GFP_KERNEL))
 	/* current SPI configuration */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_SPI_CONFIG, 0, NULL, 0, false, GFP_KERNEL))
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_SPI_CONFIG, 0,
+				       NULL, 0, false, GFP_KERNEL))
 	/* power-up chip configuration */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_SPI, NULL, 0, false, GFP_KERNEL))
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM,
+				       MCP2210_NVRAM_SPI,
+				       NULL, 0, false, GFP_KERNEL))
 	/* power-up SPI configuration */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_CHIP, NULL, 0, false, GFP_KERNEL))
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM,
+				       MCP2210_NVRAM_CHIP,
+				       NULL, 0, false, GFP_KERNEL))
 	/* user key parameters */
-	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM, MCP2210_NVRAM_KEY_PARAMS, NULL, 0, false, GFP_KERNEL))) {
-
+	 || (ret = mcp2210_add_ctl_cmd(dev, MCP2210_CMD_GET_NVRAM,
+				       MCP2210_NVRAM_KEY_PARAMS,
+				       NULL, 0, false, GFP_KERNEL))) {
 		mcp2210_err("Adding some command failed with %de", ret);
 		goto error_deregister_dev;
 	}
 
-#ifdef CONFIG_MCP2210_CREEK
-	if (creek_enabled) {
+	if (IS_ENABLED(CONFIG_MCP2210_CREEK) && creek_enabled) {
 		/* read the first 4 bytes to see if we have our magic number */
 		ret = mcp2210_eeprom_read(dev, NULL, 0, 4, eeprom_read_complete, dev, GFP_KERNEL);
 		if (ret && ret != -EINPROGRESS) {
@@ -789,7 +801,6 @@ int mcp2210_probe(struct usb_interface *intf, const struct usb_device_id *id)
 			goto error_deregister_dev;
 		}
 	}
-#endif
 
 	/* start up background cleanup thread */
 	schedule_delayed_work(&dev->delayed_work, msecs_to_jiffies(1000));
