@@ -34,7 +34,7 @@
  * the old SPI transfer() mechanism is phased out, we can modify the below
  * KERNEL_VERSION() check.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,4,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(99,4,0)
 # define USE_SPI_QUEUE 1
 #endif
 
@@ -476,7 +476,15 @@ static int prepare_transfer_hardware(struct spi_master *master)
 static int transfer_one_message(struct spi_master *master,
 				struct spi_message *msg)
 {
-	return queue_msg(mcp2210_spi_master2dev(master), msg, true);
+	int ret;
+
+	ret = queue_msg(mcp2210_spi_master2dev(master), msg, true);
+	if (ret) {
+		msg->status = ret;
+		spi_finalize_current_message(master);
+	}
+
+	return ret;
 }
 
 static int unprepare_transfer_hardware(struct spi_master *master)
