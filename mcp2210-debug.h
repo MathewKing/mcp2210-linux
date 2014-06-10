@@ -208,6 +208,8 @@ void dump_mcp_msg(
 # define dump_chip_settings(level, indent, start, x)	while(0){}
 # define dump_board_config(level, indent, start, x)	while(0){}
 # define dump_spi_xfer_settings(level, indent, start, x)while(0){}
+# define dump_usb_key_params(level, indent, start, x)	while(0){}
+# define dump_state(level, indent, start, x)		while(0){}
 # define dump_mcp_msg(level, indent, start, x)		while(0){}
 #endif /* CONFIG_MCP2210_DEBUG_VERBOSE */
 

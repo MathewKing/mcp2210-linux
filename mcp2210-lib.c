@@ -1950,6 +1950,10 @@ void _dump_cmd(const char *level, unsigned indent, const char *start,
 		dump_cmd_head(level, indent, start, cmd_head);
 }
 
+#endif /* __KERNEL__ */
+#endif /* CONFIG_MCP2210_DEBUG_VERBOSE */
+
+#if defined(__KERNEL__) && defined(CONFIG_MCP2210_DEBUG)
 void _mcp2210_dump_urbs(struct mcp2210_device *dev, const char *level,
 			int urb_mask)
 {
@@ -1963,7 +1967,4 @@ void _mcp2210_dump_urbs(struct mcp2210_device *dev, const char *level,
 		}
 	}
 }
-
-#endif /* __KERNEL__ */
-
-#endif /* CONFIG_MCP2210_DEBUG_VERBOSE */
+#endif
