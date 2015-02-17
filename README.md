@@ -22,7 +22,7 @@ Configuring, Building and Installing
 If you have your kernel sources installed and all is right with the world, building and installing (with a default configuration) is as simple as:
 
 ```
-make all && make install
+make all && make modules_install
 ```
 
 To explicitly say where your sources are, use:
