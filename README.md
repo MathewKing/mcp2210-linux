@@ -104,7 +104,7 @@ The mcp2210 driver offers two separate mechanisms to provide that information an
 
 Configuring from Userland (Manual)
 ----------------------------------
-When ioctl control is enabled (`CONFIG_MCP2210_IOCTL`), the mcp2210 driver will create a `/dev` node upon a successful probe with the name `spi2usb_bridge<x>` (where x is a number) which can be used to interact with the driver. Userspace configuration is fairly straight-forward:
+When ioctl control is enabled (`CONFIG_MCP2210_IOCTL`), the mcp2210 driver will create a `/dev` node upon a successful probe with the name `usb2spi_bridge<x>` (where x is a number) which can be used to interact with the driver. Userspace configuration is fairly straight-forward:
 
 ```
 user/mcp2210-util set config <mask>
