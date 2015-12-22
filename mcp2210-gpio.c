@@ -98,8 +98,9 @@ int mcp2210_gpio_probe(struct mcp2210_device *dev)
 	gpio->names		= (void*)dev->names; /* older kernels use char** */
 	gpio->can_sleep		= 1; /* we have to make them sleep because we
 					need to do an URB */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,2,0)
 	gpio->exported		= 0;
-
+#endif
 
 	ret = gpiochip_add(gpio);
 	if (ret) {
@@ -117,14 +118,20 @@ int mcp2210_gpio_probe(struct mcp2210_device *dev)
 
 void mcp2210_gpio_remove(struct mcp2210_device *dev)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,18,0)
 	int ret;
+#endif
 
 	mcp2210_info();
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,18,0)
+	gpiochip_remove(&dev->gpio);
+#else
 	ret = gpiochip_remove(&dev->gpio);
 	if (ret) {
 		mcp2210_err("gpiochip_remove() failed with %de", ret);
 		return;
 	}
+#endif
 	dev->s.is_gpio_probed = 0;
 }
 
