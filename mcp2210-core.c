@@ -37,7 +37,7 @@
  *   "flipping" functionality with conversions from packed (protocol-correct)
  *   little-endian structs to unpacked native-endianness structs.
  * - When a command dies and can't be retried, we need to do something more
- *   than just log it. Re-implement device failure?
+ *   than just log it.  Re-implement device failure?
  * - Change ioctl to netlink.
  * - ioctl interface not friendly with ABIs where kernel & user space have
  *   different sized ptrs (x32, sparc64, etc.) (Maybe fix this when we convert
@@ -64,7 +64,7 @@
  *
  * Background:
  *
- * The MCP2210 is a USB-to-SPI protocol converter with GPIO by Microchip. It
+ * The MCP2210 is a USB-to-SPI protocol converter with GPIO by Microchip.  It
  * uses a basic 64-byte request/response protocol for all operations, advertises
  * its self as a generic HID device and can be used via the hid-generic driver
  * from userspace using the hidraw /dev node.  A more friendly interface is
@@ -88,9 +88,9 @@
  * communicating with the MCP2210 directly via interrupt URBs and allowing your
  * choice of spi protocol driver for each SPI device, with the standard option
  * of spidev for interacting with the SPI device from userspace.  In addition,
- * it supplies an (optional) auto-configuration * scheme which utilizes the
- * devices 256 bytes of user EEPROM to store the wiring * information for the
- * board and a fairly complete ioctl interface for userland * configuration,
+ * it supplies an (optional) auto-configuration scheme which utilizes the
+ * devices 256 bytes of user EEPROM to store the wiring information for the
+ * board and a fairly complete ioctl interface for userland configuration,
  * testing and such.
  *
  * Theory of Operation:
@@ -98,15 +98,15 @@
  *
  * Commands and The Command Queue
  * ------------------------------
- * The MCP2210 driver is a queue-driven USB interface driver. All commands are
+ * The MCP2210 driver is a queue-driven USB interface driver.  All commands are
  * executed (or given the opportunity) serially, in FIFO order.  Only one
- * command may execute at a time. Each command represents a logically atomic
- * operation (e.g., send SPI transfer or query settings) and (typically)
- * exchanges at least one message with the device via via interrupt URBs.
+ * command may execute at a time.  Each command represents a logically atomic
+ * operation (e.g., send SPI transfer or query settings) and typically exchanges
+ * at least one message with the device via interrupt URBs.
  *
  * Commands are objects of either struct mcp2210_cmd or a derived-type using
  * pseudo-inheritance -- embedding a struct mcp2210_cmd object as its first
- * member and using a type field to specify the command type. There are three
+ * member and using a type field to specify the command type.  There are three
  * different types of "normal" commands that interact with the device directly.
  * Each populate the cmd->type with a pointer to an appropriate struct
  * mcp2210_cmd_type object:
@@ -119,8 +119,8 @@
  * cmd->complete and cmd->context to defer some work, possibly to execute in a
  * non-atomic context.  Currently, these are only used to probe spi and gpio,
  * neither of which can be probed at the time the USB interface is probed
- * because the information to do so is not yet available. This occurs either
- * when the user- EEPROM area has been read and decoded (when
+ * because the information to do so is not yet available.  This occurs either
+ * when the user-EEPROM area has been read and decoded (when
  * CONFIG_MCP2210_CREEK is enabled) or when the configure ioctl command is
  * called from userspace.
  *
@@ -136,19 +136,19 @@
  *
  * the driver requires a slightly more sophisticated mechanism for processing
  * commands than a simple FIFO queue processed by URB completion handlers.
- * Polling commands need to be delayed. SPI Transfers (especially on slower
+ * Polling commands need to be delayed.  SPI Transfers (especially on slower
  * chips) often need to have delays between URBs to give the device time to
- * complete transfers to the chip. Performing the configure (probing spi_master
- * and gpio_chip) must occur in a context that can sleep. If a command needs to
+ * complete transfers to the chip.  Performing the configure (probing spi_master
+ * and gpio_chip) must occur in a context that can sleep.  If a command needs to
  * be delayed, its cmd->delayed bit is set and cmd->delay_until will specify a
- * time (in jiffies) that the command is to run at. If the command must be able
+ * time (in jiffies) that the command is to run at.  If the command must be able
  * to sleep, it's cmd->nonatomic bit will be set.
  *
  * Note that there is no mechanism (at this time) to assure that a delayed
  * command will execute at its requested time, although it is guaranteed not
- * to execute prior to it. Delayed commands who's cmd->delay_until time has
+ * to execute prior to it.  Delayed commands who's cmd->delay_until time has
  * been reached still have to wait their turn in the queue to be eligible for
- * execution. If a delayed command is popped from the queue but its
+ * execution.  If a delayed command is popped from the queue but its
  * cmd->delay_until time has not yet arrived, it is moved to the
  * dev->delayed_list and an appropriate mechanism (either timer or
  * delayed_work) is set to pick it up.  If another command is executing when
@@ -157,18 +157,18 @@
  *
  * process_commands():
  * ------------------
- * Messages in the queue are processed via process_commands(). If dev->cur_cmd
+ * Messages in the queue are processed via process_commands().  If dev->cur_cmd
  * is NULL, it will attempt to retrieve a command from the queue, marking its
- * state as new. How it processes commands differs between "normal" commands
+ * state as new.  How it processes commands differs between "normal" commands
  * (which interact with the MCP2210) and general-purpose commands (which are
  * simply some delayed work)
  *
  * -- Normal Commands
  * If there is a normal command in the new state, submit_urbs() is called and
- * its state is set to "submitted". Completion handlers for the in and out URBs
+ * its state is set to "submitted".  Completion handlers for the in and out URBs
  * will eventually be called (if the usb host driver behaves) marking the
  * command as "completed" and calling process_commands() to have the completed
- * command finalized. Finalization is performed by calling struct mcp2210_cmd's
+ * command finalized.  Finalization is performed by calling struct mcp2210_cmd's
  * complete function (if non-NULL) and freeing it.  Then, the next message is
  * retrieved, and so forth.
  *
@@ -187,10 +187,10 @@
  * -------------
  * This function will first call the command type's submit_prepare() function,
  * which should perform any needed initialization, populate the 64-byte request
- * message and return non-zero unless it has an error. However, there are two
+ * message and return non-zero unless it has an error.  However, there are two
  * exceptions to this: submit_prepare() may return -ERESTARTSYS to have the
  * command deleted w/o further processing or -EAGAIN to have the message
- * restarted and submit_urbs() called again). It will then submit the URBS and
+ * restarted and submit_urbs() called again).  It will then submit the URBS and
  * change the command's state to "submitted".
  *
  * complete_urb():
@@ -442,7 +442,7 @@ static inline void reset_endpoint(struct mcp2210_endpoint *ep)
  *
  * This is only called from one place now but the code is cleaner with it
  * separated out in another function, so I'm marking inlining it for the
- * possible reduction in size. (It's only called in probe, so performance isn't
+ * possible reduction in size.  (It's only called in probe, so performance isn't
  * a big deal here.)
  */
 static __always_inline int init_endpoint(struct mcp2210_device *dev,
@@ -1629,7 +1629,7 @@ int mcp2210_add_cmd(struct mcp2210_cmd *cmd, bool free_if_dead)
 	return ret;
 }
 
-/* Perform basic checks on a response received from the device. (Do command and
+/* Perform basic checks on a response received from the device.  (Do command and
  * sub-command codes match? etc.)
  */
 static int check_response(struct mcp2210_device *dev)
@@ -1763,7 +1763,7 @@ static void complete_urb(struct urb *urb)
 
 	if (!dev->cur_cmd) {
 		mcp2210_crit("I see the RPi usb host controller is fucking up "
-			     "again. I suggest you reboot.");
+			     "again.  I suggest you reboot.");
 		return;
 	}
 
@@ -1778,7 +1778,7 @@ static void complete_urb(struct urb *urb)
 	ep = &dev->eps[is_dir_in];
 	other_ep = &dev->eps[!is_dir_in];
 
-	/* This is a crappy mechanism for dealing with recursion. The problem
+	/* This is a crappy mechanism for dealing with recursion.  The problem
 	 * is that usb_unlink_urb can call the completion handlers */
 	lock_held = !atomic_read(&ep->unlink_in_process);
 
