@@ -154,7 +154,7 @@ static int complete_cmd_chip(struct mcp2210_cmd *cmd_head, void *context)
 	switch (cmd->req.cmd) {
 	case MCP2210_CMD_GET_PIN_DIR:
 	case MCP2210_CMD_GET_PIN_VALUE:
-		c->gpio_val_dir = le16_to_cpu(dev->eps[EP_IN].buffer->body.gpio);
+		c->gpio_val_dir = dev->eps[EP_IN].buffer->body.gpio;
 		break;
 	case MCP2210_CMD_SET_CHIP_CONFIG:
 	case MCP2210_CMD_SET_PIN_DIR:
