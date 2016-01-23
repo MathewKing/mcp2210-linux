@@ -118,20 +118,18 @@ int mcp2210_gpio_probe(struct mcp2210_device *dev)
 
 void mcp2210_gpio_remove(struct mcp2210_device *dev)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,18,0)
-	int ret;
-#endif
+	int ret = 0;
 
 	mcp2210_info();
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,18,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
 	gpiochip_remove(&dev->gpio);
 #else
 	ret = gpiochip_remove(&dev->gpio);
+#endif
 	if (ret) {
 		mcp2210_err("gpiochip_remove() failed with %de", ret);
 		return;
 	}
-#endif
 	dev->s.is_gpio_probed = 0;
 }
 
