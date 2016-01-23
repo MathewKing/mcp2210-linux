@@ -34,11 +34,19 @@
 extern "C" {
 #endif /* __cplusplus */
 
+/* Do not define CONFIG_MCP2210_LOGGING_FAST_PATH unless you're debugging a timing-sensative a
+ * problem and you need log spew to be as optimized as possible. */
+#ifdef CONFIG_MCP2210_LOGGING_FAST_PATH
+# define MCP2210_LOG_UNLIKELY(expr) (expr)
+#else
+# define MCP2210_LOG_UNLIKELY(expr) unlikely(expr)
+#endif
+
 #ifdef __KERNEL__
 
 #define _mcp2210_log(level, fmt, ...)					\
 	do {								\
-		if ((level[1] - '0') <= debug_level)			\
+		if (MCP2210_LOG_UNLIKELY((level[1] - '0') <= debug_level))\
 			dev_printk(level, &dev->udev->dev,		\
 				   "%s: " fmt, __func__, ##__VA_ARGS__);\
 	} while(0)
