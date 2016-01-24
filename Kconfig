@@ -1,13 +1,142 @@
 #
 # MCP2210
 #
-	  
+
 config MCP2210
-	tristate "MCP2210 usb to spi master"
-	depends on HID && SPI
+	tristate "MCP2210 USB-to-SPI bridge"
+	depends on USB_SUPPORT
 	help
-	  If you say yes here you get support for the Microchip
-	  MCP2210 usb to spi master.
+	  If you say yes here you get (HID-free) support for the Microchip
+	  MCP2210 USB-to-SPI protocol converter with GPIO. This device
+	  advertises its self as a generic HID device and will normally be
+	  probed by hid-generic unless you (TODO).
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called mcp2210.
+
+	  If unsure, say n.
+
+config MCP2210_IOCTL
+	bool "Enable ioctl control support"
+	depends on MCP2210
+	default y
+	help
+	  Say yes here to build support for an ioctl control interface. This
+	  creates a node under /dev named usb2spi_bridge<x>. See
+	  Documentation/mfd/mcp2210 (which doesn't yet exist) to enter
+	  alternate dimension.
+
+	  If unsure, say y.
+
+config MCP2210_SPI
+	bool "Enable SPI support"
+	depends on MCP2210
+	select SPI
+	default y
+	help
+	  Say yes here to build support for using the MCP2210 as an SPI master,
+	  This options exists for those who just want to use it as a gpio
+	  expander and saves you (TODO)kb.
+
+	  If unsure, say y.
+
+config MCP2210_GPIO
+	bool "Enable GPIO support"
+	depends on MCP2210
+	select GPIOLIB
+	default y
+	help
+	  Say yes here to build support for using the device's GPIO lines. This
+	  option is not required to use gpio from userspace via the ioctl
+	  interface. Disabling saves (TODO)kb.
+
+	  If unsure, say y.
+
+config MCP2210_EEPROM
+	bool "Enable user-EEPROM support"
+	depends on MCP2210
+	default y
+	help
+	  The MCP2210 has 256 bytes of user-EEPROM.  Enabling this builds
+	  support for reading & writing this memory via ioctls and is required
+	  to use the Creek auto-configuration.
+
+	  If unsure, say y.
+
+config MCP2210_CREEK
+	bool "Creek auto-configuration support"
+	depends on MCP2210
+	select MCP2210_SPI
+	select MCP2210_GPIO
+	select MCP2210_EEPROM
+	default y
+	help
+	  Creek is an auto-configuration scheme that allows you to write the
+	  wiring configuration of your board to the MCP2210's user-EEPROM area
+	  (in a compressed format), which the driver will be able to auto-
+	  detect and read during the USB interface probe and automatically
+	  probe the attached SPI devices, gpio lines, etc.
+	  (see Documentation/mfd/mcp2210).
+
+	  If unsure, say y.
+
+config MCP2210_IRQ
+	bool "Interrupt controller support for MCP2210"
+	depends on MCP2210 && GENERIC_HARDIRQS
+	default n
+	help
+	  Say yes here to enable the MCP2210 to be used as a psudo-interrupt
+	  controller, generating local interrupts as a response to changes
+	  on the remote device.
+
+	  If unsure, say n.
+
+config MCP2210_DEBUG
+	bool "Enable debug messages"
+	depends on MCP2210
+	help
+	  Saying no here removes all debug printk messages from the driver
+	  reducing saving (TODO) bytes.  If enabled, you will still have to
+	  turn them on by either setting the module debug parameter or
+	  MCP2210_DEBUG_INITIAL to 7.
+
+	  If unsure, say n.
+
+config MCP2210_DEBUG_VERBOSE
+	bool "Enable verbose debug messages"
+	depends on MCP2210 && MCP2210_DEBUG
+	help
+	  If you say yes here you enable verbose debug messages (including dump
+	  of structs & messages).  This will increase the data & text by about
+	  (TODO)kb. Unless you are debugging the MCP2210 driver, you probably
+	  don't need this.
+
+	  If unsure, say n.
+
+config MCP2210_DEBUG_INITIAL
+	int "Initial debug level"
+	depends on MCP2210
+	default 7
+	help
+	  The initial debug level for this driver.  You can change via
+	  /sys/module/mcp2210/parameters/debug_level.
+
+config MCP2210_USB_QUIRKS
+	bool "Enable work-arounds for quirky USB host drivers"
+	depends on MCP2210
+	help
+	  Builds countermeasures for quirky USB host drivers like the BCM2835
+	  used on the Raspberry Pi to help it function better.
+
+	  If unsure, say n.
+
+config MCP2210_AUTOPM
+	bool "Enable autosuspend via pm runtime (in development)"
+	depends on MCP2210
+	select PM
+	help
+	  Saying yes here enables autosuspend support via the pm runtime
+	  core. This feature is currently in development and known to be
+	  non-working. (Enables PM Runtime)
+
+	  If unsure, say n.

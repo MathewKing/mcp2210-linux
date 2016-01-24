@@ -1,0 +1,23 @@
+# Output files
+mcp2210.ko
+Module.symvers
+user/libmcp2210.so
+user/mcp2210-util
+
+# Symlinks & per-user settings
+user/mcp2210-lib.c
+user/settings.h
+out-of-tree-autoconf.h
+
+# Temporary files & directories
+modules.order
+.tmp_versions
+*.o
+*.mod.c
+*.o.cmd
+*.ko.cmd
+
+# IDE files
+.kdev4
+.kdev_include_paths
+*.kdev4
