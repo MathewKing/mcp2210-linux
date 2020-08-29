@@ -11,7 +11,7 @@
  * Software Foundation; either version 2 of the License, or (at your option)
  * any later version.
  */
- 
+
 #ifndef _MCP2210_H
 #define _MCP2210_H
 
@@ -24,7 +24,7 @@
 #define USB_DEVICE_ID_MCP2210		0x00de
 
 #define MCP2210_BUFFER_SIZE		64
-#define MCP2210_MAX_SPEED	(12 * 1000 * 1000)
+#define MCP2210_MAX_SPEED		(12 * 1000 * 1000)
 
 struct mcp2210_device {
 	struct hid_device *hid;
@@ -53,15 +53,15 @@ struct mcp2210_command {
 
 struct mcp2210_request_list {
 	struct hid_report *report;
-	struct list_head node;	
+	struct list_head node;
 };
 
 int mcp2210_add_command(struct mcp2210_device *dev, void *cmd_data,
 		int (*next_request)(void *command_data, u8 *request),
 		void (*data_received)(void *command_data, u8 *response),
 		void (*interrupted)(void *command_data));
-		
-		
+
+
 static inline void print_msg(u8 *data) {
 	return;
 	int x;
