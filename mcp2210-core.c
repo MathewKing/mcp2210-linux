@@ -289,7 +289,7 @@ static int mcp2210_probe(struct hid_device *hdev,
 		return -ENOMEM;
 	cfg->active = 0;
 
-        dev->cfg = cfg;
+	dev->cfg = cfg;
 
 	verbose_debug(KERN_DEBUG "mcp2210_probe\n");
 
@@ -379,6 +379,7 @@ static void mcp2210_remove(struct hid_device *hdev)
 		hdev->ll_driver->power(hdev, PM_HINT_NORMAL);
 	hdev->ll_driver->close(hdev);
 
+	kfree(dev->cfg);
 	kfree(dev);
 
 	verbose_debug(KERN_DEBUG "mcp2210_remove\n");
