@@ -2,6 +2,7 @@
  *  MCP 2210 driver for linux
  *
  *  Copyright (c) 2013 Mathew King <mking@trilithic.com> for Trilithic, Inc
+ *                2020 Cristian Balint <cristian.balint@gmail.com>
  *
  */
 
@@ -18,12 +19,13 @@
 
 struct mcp2210_spi {
 	struct mcp2210_device *dev;
-	struct spi_master	*master;
+	struct spi_master *master;
 };
 
 struct mcp2210_spi_message {
 	struct spi_device *spi;
 	struct spi_message *msg;
+	struct mcp2210_dev_cfg *cfg;
 	struct spi_transfer *current_transfer;
 	unsigned int tx_pos;
 	unsigned int rx_pos;
@@ -49,22 +51,16 @@ static void fill_u16(u8 *ptr, u16 data) {
 
 static void mcp2210_spi_populate_transfer_settings(u8 *request, struct mcp2210_spi_message *mcp_msg)
 {
-	u32 bit_rate = mcp_msg->spi->max_speed_hz;
-	u16 idle_cs = ~(0x01 << mcp_msg->spi->chip_select);
-	u16 active_cs = 0xff;
-	u16 cs_to_data_delay = 5; // 5 * 100us delay
-	u16 last_byte_to_cs = 5;
-	u16 delay_between_bytes = 0;
-	u16 tansaction_bytes = mcp_msg->current_transfer->len;
-
-	if(mcp_msg->current_transfer->speed_hz)
-		bit_rate = mcp_msg->current_transfer->speed_hz;
-
-	if(bit_rate > MCP2210_MAX_SPEED)
-		bit_rate = MCP2210_MAX_SPEED;
+	u32 bit_rate = mcp_msg->cfg->bitrate;
+	u16 idle_cs = mcp_msg->cfg->idle_cs;
+	u16 active_cs = mcp_msg->cfg->active_cs;
+	u16 cs_to_data_delay = mcp_msg->cfg->cs_ds_delay;
+	u16 last_byte_to_cs = mcp_msg->cfg->cs_ls_delay;
+	u16 delay_between_bytes = mcp_msg->cfg->byte_delay;
+	u16 tansaction_bytes = mcp_msg->cfg->byte_per_spi;
 
 	// Set SPI Transfer Settings
-	request[0] = 0x40;
+	request[0] = MCP2210_CMD_SET_SPI_CONFIG;
 
 	fill_u32(request + 4, bit_rate);
 	fill_u16(request + 8, idle_cs);
@@ -74,7 +70,7 @@ static void mcp2210_spi_populate_transfer_settings(u8 *request, struct mcp2210_s
 	fill_u16(request + 16, delay_between_bytes);
 	fill_u16(request + 18, tansaction_bytes);
 
-	request[20] = mcp_msg->spi->mode & 0x03;
+	request[20] = mcp_msg->cfg->spi_mode;
 }
 
 static int next_mcp2210_spi_request(void *data, u8 *request)
@@ -89,7 +85,7 @@ static int next_mcp2210_spi_request(void *data, u8 *request)
 
 	// Check for done
 	if(mcp_msg->next == &mcp_msg->msg->transfers || mcp_msg->msg->status) {
-		//printk("mcp2210_spi Message done %d\n", mcp_msg->msg->status);
+		verbose_debug(KERN_DEBUG "mcp2210_spi Message done %d\n", mcp_msg->msg->status);
 		mcp_msg->msg->complete(mcp_msg->msg->context);
 		kfree(mcp_msg);
 		return 0;
@@ -97,7 +93,7 @@ static int next_mcp2210_spi_request(void *data, u8 *request)
 
 	// Check for start of transfer
 	if(!mcp_msg->current_transfer) {
-		//printk("mcp2210_spi Start new transfer \n");
+		verbose_debug(KERN_DEBUG "mcp2210_spi Start new transfer \n");
 		mcp_msg->current_transfer = list_entry(mcp_msg->next, struct spi_transfer, transfer_list);
 		mcp_msg->tx_pos = 0;
 		mcp_msg->rx_pos = 0;
@@ -105,7 +101,7 @@ static int next_mcp2210_spi_request(void *data, u8 *request)
 		mcp_msg->tx_bytes_in_process = 0;
 		mcp_msg->settings_set = 0;
 		mcp2210_spi_populate_transfer_settings(request, mcp_msg);
-		print_msg(request);
+		print_msg(request, MCP2210_BUFFER_SIZE);
 		return 1;
 	}
 
@@ -116,7 +112,7 @@ static int next_mcp2210_spi_request(void *data, u8 *request)
 		if(len > MCP2210_BUFFER_SIZE - 4)
 			len = MCP2210_BUFFER_SIZE - 4;
 
-		request[0] = 0x42;
+		request[0] = MCP2210_CMD_SPI_TRANSFER;
 		request[1] = len & 0xff;
 
 		if(mcp_msg->current_transfer->tx_buf)
@@ -127,18 +123,18 @@ static int next_mcp2210_spi_request(void *data, u8 *request)
 		mcp_msg->tx_in_process++;
 
 		if(len == 0) {
-			printk("ERROR: we are sending 0 bytes %d \n", mcp_msg->current_transfer->len);
+			printk(KERN_ERR "ERROR: we are sending 0 bytes %d \n", mcp_msg->current_transfer->len);
 		}
 
-		//printk("mcp2210_spi send %d bytes \n", len);
+		verbose_debug(KERN_DEBUG "mcp2210_spi send %d bytes \n", len);
 
-		print_msg(request);
+		print_msg(request, MCP2210_BUFFER_SIZE);
 		return 1;
 	}
 
 	if(mcp_msg->rx_pos < mcp_msg->current_transfer->len) {
 		// All data is sent but we need to wait and receive the rest
-		request[0] = 0x42;
+		request[0] = MCP2210_CMD_SPI_TRANSFER;
 		request[1] = 0;
 
 		mcp_msg->tx_in_process++;
@@ -147,18 +143,18 @@ static int next_mcp2210_spi_request(void *data, u8 *request)
 		if(mcp_msg->kill > 50)
 		{
 			mcp_msg->msg->status = -EIO;
-			request[0] = 0x11;
-			//printk("mcp2210_spi kill the transfer \n");
+			request[0] = MCP2210_CMD_SPI_CANCEL;
+			verbose_debug(KERN_DEBUG "mcp2210_spi kill the transfer \n");
 		}
 
-		//printk("mcp2210_spi request rx bytes \n");
+		verbose_debug(KERN_DEBUG "mcp2210_spi request rx bytes \n");
 
-		print_msg(request);
+		print_msg(request, MCP2210_BUFFER_SIZE);
 		return 1;
 	}
 
 	if(mcp_msg->tx_pos == mcp_msg->current_transfer->len) {
-		//printk("mcp2210_spi All tx bytes sent\n");
+		verbose_debug(KERN_DEBUG "mcp2210_spi All tx bytes sent\n");
 	}
 
 	return 0;
@@ -167,16 +163,15 @@ static int next_mcp2210_spi_request(void *data, u8 *request)
 static void mcp2210_spi_response(void *data, u8 *response)
 {
 	struct mcp2210_spi_message *mcp_msg = data;
-	int x;
 	u8 len;
 
-	//printk("Received data\n\n");
+	verbose_debug(KERN_DEBUG "Received data\n\n");
 
-	print_msg(response);
+	print_msg(response, MCP2210_BUFFER_SIZE);
 
 	// This is the settings response
 	if(!mcp_msg->settings_set) {
-		//printk("mcp2210_spi Sent spi settings\n");
+		verbose_debug(KERN_DEBUG "mcp2210_spi Sent spi settings\n");
 		mcp_msg->settings_set = 1;
 		return;
 	}
@@ -188,7 +183,7 @@ static void mcp2210_spi_response(void *data, u8 *response)
 	if(mcp_msg->msg->status)
 		return;
 
-	if(response[1] == 0xf8) {
+	if(response[1] == MCP2210_STATUS_BUSY) {
 		// data not accepted we need to resend
 		mcp_msg->tx_pos -= mcp_msg->tx_bytes_in_process;
 		mcp_msg->tx_bytes_in_process = 0;
@@ -217,7 +212,7 @@ static void mcp2210_spi_response(void *data, u8 *response)
 
 	if(mcp_msg->rx_pos == mcp_msg->current_transfer->len) {
 		// Transfer is done move next
-		//printk("mcp2210_spi All rx bytes read\n");
+		verbose_debug(KERN_DEBUG "mcp2210_spi All rx bytes read\n");
 		mcp_msg->current_transfer = NULL;
 		mcp_msg->next = mcp_msg->next->next;
 	}
@@ -252,9 +247,9 @@ static int mcp2210_spi_transfer(struct spi_device *spi, struct spi_message *msg)
 
 	mcp_msg->spi = spi;
 	mcp_msg->msg = msg;
+	mcp_msg->cfg = ms->dev->cfg;
 	mcp_msg->next = msg->transfers.next;
 	msg->status = 0;
-
 	mcp2210_add_command(ms->dev, mcp_msg, next_mcp2210_spi_request, mcp2210_spi_response, mcp2210_spi_interrupted);
 
 	return 0;
@@ -272,13 +267,13 @@ static struct spi_board_info demo_spi_devices[] = {
 		.chip_select = 0,
 		.max_speed_hz = MCP2210_MAX_SPEED,
 		.bus_num = 0,
-		.mode = SPI_MODE_3,
+		.mode = SPI_MODE_0,
 	}
 };
 
 int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	int ret;
-	struct spi_master	*master;
+	struct spi_master *master;
 	struct mcp2210_spi *ms;
 
 	ret = -ENOMEM;
@@ -287,7 +282,7 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 		goto out_free;
 
 	master->bus_num = -1;
-	master->num_chipselect = 4;
+	master->num_chipselect = MCP2210_MAX_CS;
 	master->setup = mcp2210_spi_setup;
 	master->transfer = mcp2210_spi_transfer;
 	master->cleanup = mcp2210_spi_cleanup;
@@ -301,7 +296,7 @@ int mcp2210_spi_probe(struct mcp2210_device *dev) {
 	ret = spi_register_master(master);
 
 	demo_spi_devices[0].bus_num = master->bus_num;
-	printk("mcp2210 spi master registered bus number %d\n", demo_spi_devices[0].bus_num);
+	printk(KERN_INFO "mcp2210 spi master registered bus number %d\n", demo_spi_devices[0].bus_num);
 
 	spi_new_device(master, demo_spi_devices);
 
@@ -318,7 +313,7 @@ out_free:
 void mcp2210_spi_remove(struct mcp2210_device *dev)
 {
 	struct mcp2210_spi *ms = dev->spi_data;
-	struct spi_master	*master = ms->master;
+	struct spi_master *master = ms->master;
 
 	spi_unregister_master(master);
 }

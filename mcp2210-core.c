@@ -2,6 +2,7 @@
  *  MCP 2210 driver for linux
  *
  *  Copyright (c) 2013 Mathew King <mking@trilithic.com> for Trilithic, Inc
+ *                2020 Cristian Balint <cristian.balint@gmail.com>
  *
  */
 
@@ -13,14 +14,16 @@
  */
 
 #include <linux/usb.h>
+#include <linux/module.h>
+
 #include "mcp2210.h"
-#include "../../hid/usbhid/usbhid.h"
 
 struct info_command {
 	int id;
 	int count;
 	int response_count;
 	int done;
+	struct mcp2210_dev_cfg *cfg;
 };
 
 int mcp2210_spi_probe(struct mcp2210_device *dev);
@@ -29,44 +32,65 @@ static void mcp2210_output_command_atomic(struct mcp2210_device *dev);
 
 int next_mcp2210_info_command(void *data, u8 *request) {
 	struct info_command *cmd_data = data;
-
-	if(cmd_data->done) {
-		kfree(cmd_data);
-		return 0;
-	}
-
-	if(cmd_data->count >= 10) {
+        // last info command
+	if(cmd_data->count >= 1) {
 		return 0;
 	}
 
 	cmd_data->count++;
-	request[0] = 0x41;
+	request[0] = MCP2210_CMD_GET_SPI_CONFIG;
 
 	return 1;
 }
 
-void next_mcp2210_info_command_data(void *data, u8 *response) {
+void next_mcp2210_info_command_response(void *data, u8 *response) {
 	struct info_command *cmd_data = data;
+	char idle_cs[10], active_cs[10];
 
 	cmd_data->response_count++;
-	if(cmd_data->response_count >= 10) {
+        // last info command response
+	if(cmd_data->response_count >= 1) {
 		cmd_data->done = 1;
-		printk("next_mcp2210_info_command done %d: %d\n", cmd_data->id, cmd_data->response_count);
+
+		verbose_debug(KERN_DEBUG "next_mcp2210_info_command done %d: %d\n", cmd_data->id, cmd_data->response_count);
+		print_msg(response, MCP2210_BUFFER_SIZE);
+
+		// parse configuration
+		cmd_data->cfg->bitrate = *(u32*)&response[4];
+		cmd_data->cfg->idle_cs = *(u16*)&response[8];
+		cmd_data->cfg->active_cs = *(u16*)&response[10];
+		cmd_data->cfg->cs_ds_delay = *(u16*)&response[12];
+		cmd_data->cfg->cs_ls_delay = *(u16*)&response[14];
+		cmd_data->cfg->byte_delay = *(u16*)&response[16];
+		cmd_data->cfg->byte_per_spi = *(u16*)&response[18];
+		cmd_data->cfg->spi_mode = response[20];
+
+                // activate cfg
+		cmd_data->cfg->active = 1;
+
+		print_binary(idle_cs, *(u16*)&response[8], 9);
+		print_binary(active_cs, *(u16*)&response[10], 9);
+		printk(KERN_INFO "MCP2210 SPI settings: bitrate=%i(bit/s) idle_cs=%s active_cs=%s cs_ds_delay=%i(us) cs_ls_delay=%i(us) byte_delay=%i(us) byte_per_spi=%i spi_mode=0x%02x\n",
+				cmd_data->cfg->bitrate, idle_cs, active_cs,
+				cmd_data->cfg->cs_ds_delay * 100,
+				cmd_data->cfg->cs_ls_delay * 100,
+				cmd_data->cfg->byte_delay * 100,
+				cmd_data->cfg->byte_per_spi,
+				cmd_data->cfg->spi_mode);
 	}
 
-	if(response[0] != 0x41) {
-		printk("wrong command \n");
+	if(response[0] != MCP2210_CMD_GET_SPI_CONFIG) {
+		printk(KERN_ERR "wrong command response: 0x%02x\n", response[0]);
 	}
 }
 
 void mcp2210_info_command_interrupted(void *data) {
 
-	printk("mcp2210_info_command_interrupted\n");
+	printk(KERN_INFO "mcp2210_info_command_interrupted\n");
 }
 
-static void mcp2210_process_commnds(struct mcp2210_device *dev) {
-	int ret = 0;
-	//printk("mcp2210_process_commnds\n");
+static void mcp2210_process_commands(struct mcp2210_device *dev) {
+	verbose_debug(KERN_DEBUG "mcp2210_process_commands\n");
 
 	// Get the next request from the current command
 	if(dev->current_command) {
@@ -75,12 +99,12 @@ static void mcp2210_process_commnds(struct mcp2210_device *dev) {
 
 	if(!dev->current_command && !list_empty(&dev->command_list)) {
 		dev->current_command = list_first_entry(&dev->command_list, struct mcp2210_command, node);
-		mcp2210_process_commnds(dev);
+		mcp2210_process_commands(dev);
 	}
 }
 
 static void mcp2210_output_command(struct work_struct *work) {
-	struct mcp2210_device *dev = container_of(work, struct mcp2210_device, command_work);
+	//struct mcp2210_device *dev = container_of(work, struct mcp2210_device, command_work);
 }
 
 static void mcp2210_output_command_atomic(struct mcp2210_device *dev) {
@@ -90,10 +114,10 @@ static void mcp2210_output_command_atomic(struct mcp2210_device *dev) {
 	int cnt, pending;
 
 	int num;
-	//printk("mcp2210_output_command\n");
+	verbose_debug(KERN_DEBUG "mcp2210_output_command\n");
 
 	if(!dev->current_command) {
-		printk("Error: no current command\n");
+		printk(KERN_ERR "Error: no current command\n");
 		return;
 	}
 
@@ -137,9 +161,7 @@ static void mcp2210_output_command_atomic(struct mcp2210_device *dev) {
 			field->value[cnt] = dev->requeust_buffer[cnt + 1];
 		}
 
-		usbhid_submit_report(dev->hid, report, USB_DIR_OUT);
-		//dev->hid->hiddev_report_event(dev->hid, report);
-		//dev->hid->hid_output_raw_report(dev->hid, dev->requeust_buffer, MCP2210_BUFFER_SIZE, HID_OUTPUT_REPORT);
+		hid_hw_request(dev->hid, report, HID_REQ_SET_REPORT);
 
 		if(dev->current_command->requests_pending >= 63)
 			break;
@@ -148,14 +170,14 @@ static void mcp2210_output_command_atomic(struct mcp2210_device *dev) {
 		num = dev->current_command->next_request(dev->current_command->data, dev->requeust_buffer);
 	}
 
-	//printk("Sending %d commands\n", dev->current_command->requests_pending);
+	verbose_debug(KERN_DEBUG "Sending %d commands\n", dev->current_command->requests_pending);
 	if(dev->current_command->requests_pending == 0) {
 		// The command has finished so remove it
 		list_del(&dev->current_command->node);
 
 		kfree(dev->current_command);
 		dev->current_command = NULL;
-		mcp2210_process_commnds(dev);
+		mcp2210_process_commands(dev);
 	}
 
 	return;
@@ -168,7 +190,7 @@ err_free_field:
 	kfree(field);
 err_free_report:
 	kfree(report);
-err:
+
 	pending = dev->current_command->requests_pending;
 	if(pending == 0) {
 		if(dev->current_command->interrupted)
@@ -177,7 +199,7 @@ err:
 
 		kfree(dev->current_command);
 		dev->current_command = NULL;
-		mcp2210_process_commnds(dev);
+		mcp2210_process_commands(dev);
 	}
 }
 
@@ -189,7 +211,7 @@ int mcp2210_add_command(struct mcp2210_device *dev, void *cmd_data,
 	struct mcp2210_command *cmd;
 
 	spin_lock(&dev->command_lock);
-	//printk("mcp2210_add_command lock\n");
+	verbose_debug(KERN_DEBUG "mcp2210_add_command lock\n");
 
 	cmd = kzalloc(sizeof(struct mcp2210_command), GFP_KERNEL);
 	if (!cmd)
@@ -207,10 +229,10 @@ int mcp2210_add_command(struct mcp2210_device *dev, void *cmd_data,
 
 
 	if(!dev->current_command) {
-		mcp2210_process_commnds(dev);
+		mcp2210_process_commands(dev);
 	}
 
-	//printk("mcp2210_add_command unlock\n");
+	verbose_debug(KERN_DEBUG "mcp2210_add_command unlock\n");
 	spin_unlock(&dev->command_lock);
 
 	return 0;
@@ -233,15 +255,15 @@ static int mcp2210_raw_event(struct hid_device *hdev, struct hid_report *report,
 
 	if(size == MCP2210_BUFFER_SIZE && dev->current_command) {
 		spin_lock(&dev->command_lock);
-		//printk("mcp2210_raw_event lock\n");
+		verbose_debug(KERN_DEBUG "mcp2210_raw_event lock\n");
 		list_node = list_first_entry(&dev->current_command->request_list, struct mcp2210_request_list, node);
 		mcp2210_free_request(list_node);
 
 		dev->current_command->data_received(dev->current_command->data, data);
 		dev->current_command->requests_pending--;
 
-		mcp2210_process_commnds(dev);
-		//printk("mcp2210_raw_event unlock\n");
+		mcp2210_process_commands(dev);
+		verbose_debug(KERN_DEBUG "mcp2210_raw_event unlock\n");
 		spin_unlock(&dev->command_lock);
 		return 1;
 	}
@@ -255,13 +277,21 @@ static int mcp2210_probe(struct hid_device *hdev,
 {
 	int ret;
 	struct mcp2210_device *dev;
+	struct mcp2210_dev_cfg *cfg;
 	struct info_command *cmd_data;
 
 	dev = kzalloc(sizeof(struct mcp2210_device), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 
-	printk("mcp2210_probe\n");
+	cfg = kzalloc(sizeof(struct mcp2210_dev_cfg), GFP_KERNEL);
+	if (!cfg)
+		return -ENOMEM;
+	cfg->active = 0;
+
+        dev->cfg = cfg;
+
+	verbose_debug(KERN_DEBUG "mcp2210_probe\n");
 
 	hid_set_drvdata(hdev, dev);
 	dev->hid = hdev;
@@ -300,31 +330,16 @@ static int mcp2210_probe(struct hid_device *hdev,
 		goto err_power;
 	}
 
-	/*
 	cmd_data = kzalloc(sizeof(struct info_command), GFP_KERNEL);
 	if (!cmd_data)
 		return -ENOMEM;
+
 
 	cmd_data->id = 1;
-	mcp2210_add_command(dev, cmd_data, next_mcp2210_info_command, next_mcp2210_info_command_data, mcp2210_info_command_interrupted);
+	cmd_data->cfg = dev->cfg;
+	// Query current SPI settings from IC
+	mcp2210_add_command(dev, cmd_data, next_mcp2210_info_command, next_mcp2210_info_command_response, mcp2210_info_command_interrupted);
 
-
-	cmd_data = kzalloc(sizeof(struct info_command), GFP_KERNEL);
-	if (!cmd_data)
-		return -ENOMEM;
-
-	cmd_data->id = 2;
-	mcp2210_add_command(dev, cmd_data, next_mcp2210_info_command, next_mcp2210_info_command_data, mcp2210_info_command_interrupted);
-
-
-	cmd_data = kzalloc(sizeof(struct info_command), GFP_KERNEL);
-	if (!cmd_data)
-		return -ENOMEM;
-
-	cmd_data->id = 3;
-	mcp2210_add_command(dev, cmd_data, next_mcp2210_info_command, next_mcp2210_info_command_data, mcp2210_info_command_interrupted);
-
-	*/
 	return 0;
 
 err_power:
@@ -333,6 +348,7 @@ err_power:
 	hdev->ll_driver->close(hdev);
 err_free:
 	kfree(dev);
+
 	return ret;
 }
 
@@ -365,7 +381,7 @@ static void mcp2210_remove(struct hid_device *hdev)
 
 	kfree(dev);
 
-	printk("mcp2210_remove\n");
+	verbose_debug(KERN_DEBUG "mcp2210_remove\n");
 	hid_hw_stop(hdev);
 }
 
@@ -386,7 +402,7 @@ static struct hid_driver mcp2210_driver = {
 static int __init mcp2210_init(void)
 {
 	int ret;
-	printk("mcp2210_init\n");
+	verbose_debug(KERN_DEBUG "mcp2210_init\n");
 
 	ret = hid_register_driver(&mcp2210_driver);
 	if (ret)
@@ -397,9 +413,13 @@ static int __init mcp2210_init(void)
 
 static void __exit mcp2210_exit(void)
 {
-	printk("mcp2210_exit\n");
+	verbose_debug(KERN_DEBUG "mcp2210_exit\n");
 	hid_unregister_driver(&mcp2210_driver);
 }
+
+int debug = 0;
+module_param(debug, int, 0644);
+MODULE_PARM_DESC(debug, "Enable debug messages");
 
 module_init(mcp2210_init);
 module_exit(mcp2210_exit);
